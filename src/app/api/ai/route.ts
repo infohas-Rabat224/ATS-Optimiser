@@ -1,12 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import ZAI from 'z-ai-web-dev-sdk';
 
-console.log('🔄 API route loaded - v5 (using z-ai-web-dev-sdk)');
+console.log('🔄 API route loaded - v6 (using z-ai-web-dev-sdk with env vars)');
+
+// Configuration from environment variables
+function getAIConfig() {
+  const baseUrl = process.env.ZAI_BASE_URL || process.env.NEXT_PUBLIC_ZAI_BASE_URL;
+  const apiKey = process.env.ZAI_API_KEY || process.env.NEXT_PUBLIC_ZAI_API_KEY;
+  
+  if (!baseUrl || !apiKey) {
+    return null;
+  }
+  
+  return { baseUrl, apiKey };
+}
 
 // Initialize ZAI client
-let zaiClient: Awaited<ReturnType<typeof ZAI.create>> | null = null;
+let zaiClient: ZAI | null = null;
 
 async function getZAIClient() {
+  // Try to use environment variables first
+  const config = getAIConfig();
+  if (config) {
+    if (!zaiClient) {
+      zaiClient = new ZAI(config);
+    }
+    return zaiClient;
+  }
+  
+  // Fall back to config file (for local development)
   if (!zaiClient) {
     zaiClient = await ZAI.create();
   }
@@ -69,6 +91,13 @@ async function handleLocalExtraction(data: any) {
 async function handleDefaultAI(action: string, data: any) {
   try {
     const zai = await getZAIClient();
+    
+    if (!zai) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'AI service not configured. Please set ZAI_BASE_URL and ZAI_API_KEY environment variables.' 
+      }, { status: 500 });
+    }
     
     // Build the prompt based on action
     let prompt: string;
