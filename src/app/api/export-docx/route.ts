@@ -16,6 +16,8 @@ export async function POST(request: NextRequest) {
     // Parse HTML content and create docx elements
     const elements = parseHtmlToDocx(content);
     
+    console.log('Generated paragraphs count:', elements.length);
+    
     // Create the document with proper margins
     const doc = new Document({
       styles: {
@@ -78,126 +80,169 @@ export async function POST(request: NextRequest) {
 function parseHtmlToDocx(html: string): Paragraph[] {
   const paragraphs: Paragraph[] = [];
   
-  // Clean HTML
-  let cleanHtml = html.replace(/\s+/g, ' ').trim();
+  // Track seen content to avoid exact duplicates
+  const seenContent = new Set<string>();
   
-  // Extract name (h1)
-  const h1Match = html.match(/<h1[^>]*>(.*?)<\/h1>/i);
+  // Parse HTML in document order by finding all top-level elements
+  // Use a regex to find all elements in order
+  const elementRegex = /<(h[1-4]|p|ul|li)[^>]*>([\s\S]*?)<\/\1>/gi;
+  
+  // First, extract h1 (name)
+  const h1Match = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
   if (h1Match) {
     const name = cleanText(h1Match[1]);
     paragraphs.push(new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { after: 100 },
+      spacing: { after: 80 },
       children: [new TextRun({ text: name, bold: true, size: 32, font: "Times New Roman" })]
     }));
   }
   
-  // Extract subtitle (h4)
-  const h4Match = html.match(/<h4[^>]*>(.*?)<\/h4>/i);
+  // Extract h4 (subtitle/contact info)
+  const h4Match = html.match(/<h4[^>]*>([\s\S]*?)<\/h4>/i);
   if (h4Match) {
     const subtitle = cleanText(h4Match[1]);
     paragraphs.push(new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { after: 200 },
+      spacing: { after: 160 },
       children: [new TextRun({ text: subtitle, size: 24, font: "Times New Roman" })]
     }));
   }
   
-  // Track seen content to avoid duplicates
-  const seenParagraphs = new Set<string>();
+  // Now process the rest of the content in order
+  // Split HTML into sections by top-level elements
+  const cleanHtml = html.replace(/<h[1-4][^>]*>[\s\S]*?<\/h[1-4]>/gi, ''); // Remove already processed headers
   
-  // Extract all ul sections and process them
-  const ulMatches = html.matchAll(/<ul[^>]*>(.*?)<\/ul>/gis);
-  const ulPositions: number[] = [];
+  // Find all paragraphs and lists in order
+  const parts: Array<{type: string, content: string}> = [];
   
-  for (const ulMatch of ulMatches) {
-    ulPositions.push(ulMatch.index || 0);
-  }
+  // Match <p> tags
+  const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+  let match;
+  let lastIndex = 0;
   
-  // Process all <p> tags
-  const pMatches = html.matchAll(/<p[^>]*>(.*?)<\/p>/gi);
+  // Create a combined regex for all elements we want to process in order
+  const combinedRegex = /<(p|ul)[^>]*>([\s\S]*?)<\/\1>/gi;
   
-  for (const match of pMatches) {
-    const content = match[1];
-    const cleanContent = cleanText(content);
+  while ((match = combinedRegex.exec(cleanHtml)) !== null) {
+    const tagName = match[1].toLowerCase();
+    const content = match[2];
     
-    // Skip empty or duplicate
-    if (!cleanContent || seenParagraphs.has(cleanContent.toLowerCase())) continue;
-    seenParagraphs.add(cleanContent.toLowerCase());
-    
-    // Check if it's a section header (strong tag)
-    const strongMatch = content.match(/<strong>(.*?)<\/strong>/i);
-    if (strongMatch) {
-      const strongText = cleanText(strongMatch[1]);
-      const restText = cleanText(content.replace(/<strong>.*?<\/strong>/i, '')).replace(/^\s*[-|]\s*/, '');
-      
-      // Section header (all uppercase)
-      if (strongText === strongText.toUpperCase() && strongText.length > 3) {
-        paragraphs.push(new Paragraph({
-          spacing: { before: 200, after: 100 },
-          children: [new TextRun({ text: strongText, bold: true, size: 24, font: "Times New Roman" })]
-        }));
-        if (restText) {
-          paragraphs.push(new Paragraph({
-            spacing: { after: 100 },
-            children: [new TextRun({ text: restText, size: 24, font: "Times New Roman" })]
-          }));
-        }
-      } else {
-        // Job title / company line
-        paragraphs.push(new Paragraph({
-          spacing: { after: 100 },
-          children: [
-            new TextRun({ text: strongText, bold: true, size: 24, font: "Times New Roman" }),
-            new TextRun({ text: restText, size: 24, font: "Times New Roman" })
-          ]
-        }));
+    if (tagName === 'p') {
+      parts.push({ type: 'p', content: content });
+    } else if (tagName === 'ul') {
+      // Extract list items from this ul
+      const liRegex = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+      let liMatch;
+      while ((liMatch = liRegex.exec(content)) !== null) {
+        parts.push({ type: 'li', content: liMatch[1] });
       }
-    } else if (cleanContent) {
-      // Regular paragraph
-      paragraphs.push(new Paragraph({
-        spacing: { after: 100 },
-        children: [new TextRun({ text: cleanContent, size: 24, font: "Times New Roman" })]
-      }));
     }
   }
   
-  // Process list items - each bullet on its own line
-  const liMatches = html.matchAll(/<li[^>]*>(.*?)<\/li>/gis);
-  
-  for (const liMatch of liMatches) {
-    let liContent = cleanText(liMatch[1]);
-    
-    // Skip if empty
-    if (!liContent) continue;
-    
-    // Remove leading bullet if present (we'll add proper bullet)
-    liContent = liContent.replace(/^•\s*/i, '');
-    
-    // Check for category: value format
-    const catMatch = liContent.match(/^(.+?):\s*(.+)$/);
-    
-    if (catMatch) {
-      // Category with skills
-      paragraphs.push(new Paragraph({
-        numbering: { reference: "bullet-list", level: 0 },
-        spacing: { after: 60 },
-        children: [
-          new TextRun({ text: catMatch[1] + ": ", bold: true, size: 24, font: "Times New Roman" }),
-          new TextRun({ text: catMatch[2], size: 24, font: "Times New Roman" })
-        ]
-      }));
-    } else {
-      // Regular bullet
-      paragraphs.push(new Paragraph({
-        numbering: { reference: "bullet-list", level: 0 },
-        spacing: { after: 60 },
-        children: [new TextRun({ text: liContent, size: 24, font: "Times New Roman" })]
-      }));
+  // Process all parts in order
+  for (const part of parts) {
+    if (part.type === 'p') {
+      const result = processParagraph(part.content, seenContent);
+      if (result) {
+        paragraphs.push(result);
+      }
+    } else if (part.type === 'li') {
+      const result = processListItem(part.content, seenContent);
+      if (result) {
+        paragraphs.push(result);
+      }
     }
   }
   
   return paragraphs;
+}
+
+function processParagraph(content: string, seenContent: Set<string>): Paragraph | null {
+  const cleanContent = cleanText(content);
+  
+  // Skip if empty
+  if (!cleanContent || cleanContent.length < 2) return null;
+  
+  // Skip duplicates
+  const normalized = cleanContent.toLowerCase().trim();
+  if (seenContent.has(normalized)) return null;
+  seenContent.add(normalized);
+  
+  // Check if it contains a <strong> tag
+  const strongMatch = content.match(/<strong>([\s\S]*?)<\/strong>/i);
+  
+  if (strongMatch) {
+    const strongText = cleanText(strongMatch[1]);
+    const restHtml = content.replace(/<strong>[\s\S]*?<\/strong>/i, '');
+    const restText = cleanText(restHtml).replace(/^\s*[\|–—-]\s*/, '');
+    
+    // Check if this is a section header (all uppercase)
+    const isSectionHeader = strongText === strongText.toUpperCase() && 
+                            strongText.length > 3 && 
+                            !strongText.includes('|') &&
+                            !strongText.includes('@');
+    
+    if (isSectionHeader) {
+      // Section header only
+      return new Paragraph({
+        spacing: { before: 200, after: 80 },
+        children: [new TextRun({ text: strongText, bold: true, size: 24, font: "Times New Roman" })]
+      });
+    } else {
+      // Job title with company/date info
+      const fullText = strongText + (restText ? ' ' + restText : '');
+      return new Paragraph({
+        spacing: { after: 80 },
+        children: [
+          new TextRun({ text: strongText, bold: true, size: 24, font: "Times New Roman" }),
+          restText ? new TextRun({ text: ' ' + restText, size: 24, font: "Times New Roman" }) : new TextRun({ text: '' })
+        ]
+      });
+    }
+  }
+  
+  // Regular paragraph (no strong tag)
+  return new Paragraph({
+    spacing: { after: 80 },
+    children: [new TextRun({ text: cleanContent, size: 24, font: "Times New Roman" })]
+  });
+}
+
+function processListItem(content: string, seenContent: Set<string>): Paragraph | null {
+  let liContent = cleanText(content);
+  
+  // Skip if empty
+  if (!liContent || liContent.length < 2) return null;
+  
+  // Remove leading bullet if present (we'll use proper bullet)
+  liContent = liContent.replace(/^•\s*/, '').trim();
+  
+  // Skip duplicates
+  const normalized = liContent.toLowerCase().trim();
+  if (seenContent.has(normalized)) return null;
+  seenContent.add(normalized);
+  
+  // Check for "Category: Value" format
+  const catMatch = liContent.match(/^(.+?):\s*(.+)$/);
+  
+  if (catMatch && catMatch[1].length < 40) { // Make sure category is not too long
+    return new Paragraph({
+      numbering: { reference: "bullet-list", level: 0 },
+      spacing: { after: 60 },
+      children: [
+        new TextRun({ text: catMatch[1] + ": ", bold: true, size: 24, font: "Times New Roman" }),
+        new TextRun({ text: catMatch[2], size: 24, font: "Times New Roman" })
+      ]
+    });
+  }
+  
+  // Regular bullet point
+  return new Paragraph({
+    numbering: { reference: "bullet-list", level: 0 },
+    spacing: { after: 60 },
+    children: [new TextRun({ text: liContent, size: 24, font: "Times New Roman" })]
+  });
 }
 
 function cleanText(html: string): string {
@@ -208,6 +253,7 @@ function cleanText(html: string): string {
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
     .replace(/\s+/g, ' ')
     .trim();
 }
