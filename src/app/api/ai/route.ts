@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import ZAI from 'z-ai-web-dev-sdk';
 
-console.log('🔄 API route loaded - v9 (improved URL fetching with direct HTTP support)');
+// Version tag for deployment verification
+const API_VERSION = 'v10-final';
+
+console.log(`🔄 API route loaded - ${API_VERSION} (URL fetching with direct HTTP + ZAI fallback)`);
 
 // Configuration from environment variables
 function getAIConfig() {
@@ -255,12 +258,13 @@ async function handleFetchJob(data: any, provider?: string, apiKey?: string, mod
     // No content fetched
     return NextResponse.json({ 
       success: false, 
-      error: 'Could not fetch job details from this URL. Please paste the job description manually.' 
+      error: 'Could not fetch job details from this URL. Please paste the job description manually.',
+      version: API_VERSION
     }, { status: 400 });
     
   } catch (error: any) {
     console.error('Job fetch error:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: error.message, version: API_VERSION }, { status: 500 });
   }
 }
 
