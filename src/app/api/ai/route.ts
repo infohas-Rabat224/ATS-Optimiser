@@ -137,10 +137,9 @@ async function handleFetchJob(data: any, provider?: string, apiKey?: string, mod
   }
   
   try {
-    // First, try to fetch job content from URL using web search
-    let jobContent = `Job URL: ${url}`;
+    let jobContent = '';
     
-    // Try using z-ai's web search if available
+    // Try using z-ai's built-in web reader (no user API key needed)
     try {
       const zai = await getZAIClient();
       if (zai) {
@@ -154,12 +153,12 @@ async function handleFetchJob(data: any, provider?: string, apiKey?: string, mod
           // Web reader failed, try web search
           try {
             const searchResult = await zai.functions.invoke("web_search", {
-              query: `job listing site:${url.replace(/^https?:\/\//, '').split('/')[0]}`,
-              num: 3
+              query: `job listing ${url}`,
+              num: 5
             });
             if (searchResult && Array.isArray(searchResult) && searchResult.length > 0) {
               jobContent = searchResult.map((r: any) => 
-                `${r.name || ''}\n${r.snippet || ''}`
+                `Title: ${r.name || 'N/A'}\nURL: ${r.url || 'N/A'}\nSnippet: ${r.snippet || 'N/A'}`
               ).join('\n\n');
             }
           } catch (e2) {
@@ -171,40 +170,44 @@ async function handleFetchJob(data: any, provider?: string, apiKey?: string, mod
       console.log('Failed to fetch from web:', e);
     }
     
-    // Then use AI to analyze the job content
-    const prompt = `You are a job listing analyst. Analyze the following job information and extract key details.\n\nJOB INFORMATION:\n${jobContent}\n\nExtract and summarize:\n- Job Title\n- Company Name\n- Location\n- Key Responsibilities\n- Required Skills (Hard Skills)\n- Soft Skills\n- Benefits/Perks\n- Salary (if mentioned)\n\nProvide a comprehensive summary that a job seeker would find useful for tailoring their resume.`;
-    
-    // Use the specified provider to analyze
-    if (provider && apiKey) {
-      switch (provider) {
-        case 'gemini':
-          return await handleGemini('fetch-job', { jobContent, prompt }, apiKey, model);
-        case 'openai':
-          return await handleOpenAI('fetch-job', { jobContent, prompt }, apiKey, model);
-        case 'deepseek':
-          return await handleDeepSeek('fetch-job', { jobContent, prompt }, apiKey, model);
-        case 'groq':
-          return await handleGroq('fetch-job', { jobContent, prompt }, apiKey, model);
-        case 'anthropic':
-          return await handleAnthropic('fetch-job', { jobContent, prompt }, apiKey, model);
-        case 'glm':
-          return await handleGLM('fetch-job', { jobContent, prompt }, apiKey, model);
-        case 'mistral':
-          return await handleMistral('fetch-job', { jobContent, prompt }, apiKey, model);
-        case 'xai':
-          return await handleXAI('fetch-job', { jobContent, prompt }, apiKey, model);
-        default:
-          // Use prompt directly
-          const aiData = { resume: '', job: jobContent };
-          return await handleGemini('fetch-job', { ...aiData, prompt }, apiKey, model);
+    // If we got content, return it (no AI analysis needed)
+    if (jobContent && jobContent.length > 100) {
+      // If user has API key, enhance with AI analysis
+      if (provider && apiKey) {
+        const prompt = `You are a job listing analyst. Analyze the following job information and extract key details.\n\nJOB INFORMATION:\n${jobContent}\n\nExtract and summarize:\n- Job Title\n- Company Name\n- Location\n- Key Responsibilities\n- Required Skills (Hard Skills)\n- Soft Skills\n- Benefits/Perks\n- Salary (if mentioned)\n\nProvide a comprehensive summary that a job seeker would find useful for tailoring their resume.`;
+        
+        try {
+          switch (provider) {
+            case 'gemini':
+              return await handleGemini('fetch-job', { jobContent, prompt }, apiKey, model);
+            case 'openai':
+              return await handleOpenAI('fetch-job', { jobContent, prompt }, apiKey, model);
+            case 'deepseek':
+              return await handleDeepSeek('fetch-job', { jobContent, prompt }, apiKey, model);
+            case 'groq':
+              return await handleGroq('fetch-job', { jobContent, prompt }, apiKey, model);
+            default:
+              // Just return the raw content
+              break;
+          }
+        } catch (aiError) {
+          console.log('AI analysis failed, returning raw content:', aiError);
+        }
       }
-    } else {
-      // No API key provided
-      return NextResponse.json({ 
-        success: false, 
-        error: 'Please configure an API key in Settings to fetch job details.' 
-      }, { status: 400 });
+      
+      // Return raw content (works without API key)
+      return NextResponse.json({
+        success: true,
+        data: { text: jobContent }
+      });
     }
+    
+    // No content fetched
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Could not fetch job details from the URL. Please paste the job description manually.' 
+    }, { status: 400 });
+    
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }

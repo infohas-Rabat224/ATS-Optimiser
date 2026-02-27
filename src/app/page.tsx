@@ -309,20 +309,18 @@ const parseFile = async (file: File, settings: any): Promise<string> => {
 };
 
 const fetchJobWithGemini = async (url: string, settings: any) => {
-  if (!settings?.apiKey) {
-    throw new Error("Please configure your API key in Settings.");
-  }
+  // URL fetching now works without API key using built-in web reader
   try {
-    // Send URL to backend for processing with web search
+    // Send URL to backend for processing with web reader
     const response = await fetch('/api/ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         action: 'fetch-job', 
         data: { url },
-        provider: settings.provider,
-        apiKey: settings.apiKey,
-        model: settings.model
+        provider: settings?.provider,
+        apiKey: settings?.apiKey,
+        model: settings?.model
       })
     });
     const result = await response.json();
