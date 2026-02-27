@@ -234,7 +234,7 @@ const A4_CONSTANTS = {
   charsPerLine: 85,
   linesPerPage: 46,
   optimalCharCount: { min: 2800, max: 3000 },
-  minCharCount: 2500,
+  minCharCount: 2800,
   maxCharCount: 3200
 };
 
@@ -325,6 +325,7 @@ export default function ATSApp() {
   const [tempSettings, setTempSettings] = useState<AppSettings | null>(null);
   const [isFetchingJob, setIsFetchingJob] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [pdfFallbackNotification, setPdfFallbackNotification] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resumePreviewRef = useRef<HTMLDivElement>(null);
@@ -1329,7 +1330,9 @@ Now optimize following ALL modules strictly. Return ONLY the JSON.
     try {
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
       const element = resumePreviewRef.current;
-      if (!element) return;
+      if (!element) {
+        throw new Error('Preview element not found');
+      }
       
       await pdf.html(element, {
         x: 12.7,
@@ -1340,7 +1343,14 @@ Now optimize following ALL modules strictly. Return ONLY the JSON.
       
       pdf.save('Optimized_Resume.pdf');
     } catch (error) {
-      alert('PDF generation failed. Please use DOCX format.');
+      console.error('PDF generation failed:', error);
+      // Automatically fallback to DOCX
+      if (result?.optimized_content) {
+        await downloadDocx(result.optimized_content, 'Optimized_Resume.docx');
+        setPdfFallbackNotification('PDF generation failed. The file has been generated in DOCX format instead.');
+        // Auto-hide notification after 5 seconds
+        setTimeout(() => setPdfFallbackNotification(null), 5000);
+      }
     }
   };
 
@@ -1382,6 +1392,24 @@ Now optimize following ALL modules strictly. Return ONLY the JSON.
   // =============================================================================
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50">
+      {/* PDF Fallback Notification */}
+      {pdfFallbackNotification && (
+        <div className="fixed top-20 right-6 z-50 bg-amber-50 border border-amber-200 rounded-lg shadow-lg p-4 max-w-sm animate-fade-in">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-amber-800">{pdfFallbackNotification}</p>
+            </div>
+            <button 
+              onClick={() => setPdfFallbackNotification(null)}
+              className="text-amber-600 hover:text-amber-800"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+      
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
@@ -1659,6 +1687,15 @@ Now optimize following ALL modules strictly. Return ONLY the JSON.
                 className="w-full py-3 rounded-lg border border-slate-300 text-slate-600 font-medium hover:bg-slate-50"
               >
                 Start Over
+              </button>
+              
+              {/* Proceed to Step 4 Button */}
+              <button
+                onClick={generateInterviewPrep}
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700 mt-3 disabled:opacity-50"
+              >
+                {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Processing...</> : <><MessageSquare className="w-4 h-4" /> Proceed to Interview Prep</>}
               </button>
             </div>
             

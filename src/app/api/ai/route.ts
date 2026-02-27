@@ -410,6 +410,18 @@ function buildOptimizePrompt(data: any): string {
   return `You are an ATS Resume Expert. Create an OPTIMIZED RESUME in HTML format.
 
 ═══════════════════════════════════════════════════════════════════════════════
+CRITICAL CHARACTER COUNT REQUIREMENT
+═══════════════════════════════════════════════════════════════════════════════
+
+⚠️ MINIMUM 2800 CHARACTERS - MAXIMUM 3200 CHARACTERS (text content only) ⚠️
+
+This is MANDATORY. The resume MUST have at least 2800 characters of text content.
+- Count characters in the final output (excluding HTML tags)
+- If below 2800: Add more bullet points, expand descriptions, include more skills
+- If above 3200: Trim less important content while keeping key achievements
+- Maintain ONE PAGE layout - do not exceed
+
+═══════════════════════════════════════════════════════════════════════════════
 CRITICAL BULLET FORMATTING RULES - MUST FOLLOW EXACTLY
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -438,12 +450,13 @@ CORRECT FORMAT (each bullet on its own line):
 OTHER CRITICAL RULES
 ═══════════════════════════════════════════════════════════════════════════════
 
-1. Output MUST fit on ONE A4 page (max 400 words)
+1. Output MUST fit on ONE A4 page with margins 0.95cm
 2. NO duplicate content - check your output before returning
 3. Font: Times New Roman, 12pt
-4. Margins: 0.95cm all sides
-5. Maximum 4 bullets per job position
-6. Maximum 3 skill categories
+4. Maximum 5 bullets per job position (use all 5 to reach character minimum)
+5. Maximum 4 skill categories with detailed skills listed
+6. Include quantified achievements with numbers/percentages
+7. Professional summary should be 3-4 detailed sentences
 
 ═══════════════════════════════════════════════════════════════════════════════
 EXACT OUTPUT FORMAT (copy this structure exactly)
@@ -453,22 +466,24 @@ EXACT OUTPUT FORMAT (copy this structure exactly)
 <h4>Job Title | City, Country | Phone | Email</h4>
 
 <p><strong>PROFESSIONAL SUMMARY</strong></p>
-<p>Two sentences about professional background and key strengths.</p>
+<p>Three to four detailed sentences about professional background, key achievements, and career objectives with specific metrics where possible.</p>
 
 <p><strong>CORE COMPETENCIES & SKILLS</strong></p>
 <ul>
-<li>• <strong>Customer Service:</strong> Client Relations, Problem Resolution.</li>
-<li>• <strong>Operations:</strong> Process Improvement, Team Coordination.</li>
-<li>• <strong>Communication:</strong> Multilingual, Professional Correspondence.</li>
+<li>• <strong>Customer Service:</strong> Client Relations, Problem Resolution, Conflict Management.</li>
+<li>• <strong>Operations:</strong> Process Improvement, Team Coordination, Resource Management.</li>
+<li>• <strong>Communication:</strong> Multilingual, Professional Correspondence, Stakeholder Management.</li>
+<li>• <strong>Technical:</strong> Microsoft Office Suite, CRM Systems, Data Analysis Tools.</li>
 </ul>
 
 <p><strong>PROFESSIONAL EXPERIENCE</strong></p>
 <p><strong>Job Title</strong> Company | City, Country | Month Year – Month Year</p>
 <ul>
-<li>• Delivered exceptional customer service to 100+ clients daily.</li>
-<li>• Improved operational efficiency by 20% through process optimization.</li>
-<li>• Led team of 8 staff members to exceed performance targets.</li>
-<li>• Implemented new scheduling system reducing wait times by 30%.</li>
+<li>• Delivered exceptional customer service to 100+ clients daily, maintaining a 98% satisfaction rating through proactive communication and efficient problem resolution.</li>
+<li>• Improved operational efficiency by 20% through implementation of streamlined workflows and standardized procedures.</li>
+<li>• Led and mentored a team of 8 staff members, consistently exceeding performance targets by 15%.</li>
+<li>• Implemented new scheduling system reducing average wait times by 30% and increasing daily service capacity.</li>
+<li>• Developed and executed training programs for new hires, reducing onboarding time by 25%.</li>
 </ul>
 
 <p><strong>EDUCATION</strong></p>
@@ -478,6 +493,7 @@ EXACT OUTPUT FORMAT (copy this structure exactly)
 <ul>
 <li>• Language 1: Native</li>
 <li>• Language 2: Fluent</li>
+<li>• Language 3: Professional Working Proficiency</li>
 </ul>
 
 ═══════════════════════════════════════════════════════════════════════════════
