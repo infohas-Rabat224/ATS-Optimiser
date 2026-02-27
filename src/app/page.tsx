@@ -436,81 +436,632 @@ const HistorySidebar = ({ isOpen, onClose, history, onLoad, onDelete }) => {
    )
 }
 
-const DashboardView = ({ onClose }) => {
-  const [files, setFiles] = useState([]);
-  const [processing, setProcessing] = useState(false);
-  const [completed, setCompleted] = useState([]);
+// =============================================================================
+// ENHANCED ENTERPRISE DASHBOARD WITH BATCH IMPORT/EXPORT
+// =============================================================================
 
-  const handleBatchUpload = (e) => {
-     if(e.target.files) {
-        const newFiles = Array.from(e.target.files).map(f => ({ name: f.name, status: 'pending' }));
-        setFiles(prev => [...prev, ...newFiles]);
-     }
-  }
+interface BatchFile {
+  file: File;
+  name: string;
+  status: 'pending' | 'uploading' | 'queued' | 'done' | 'error';
+  error?: string;
+}
 
-  const startBatch = () => {
-     if(files.length === 0) return;
-     setProcessing(true);
-     let processedCount = 0;
-     const interval = setInterval(() => {
-        processedCount++;
-        setCompleted(prev => [...prev, files[processedCount - 1]]);
-        if(processedCount >= files.length) {
-           clearInterval(interval);
-           setProcessing(false);
-           alert("Batch Optimization Complete!");
+interface BatchProgress {
+  batchId: string;
+  totalFiles: number;
+  completedFiles: number;
+  failedFiles: number;
+  processingFiles: number;
+  progressPercentage: number;
+  status: string;
+  resumes: Array<{
+    id: string;
+    fileName: string;
+    status: string;
+    atsScoreBefore?: number;
+    atsScoreAfter?: number;
+    errorMessage?: string;
+  }>;
+}
+
+const DashboardView = ({ onClose, settings }) => {
+  // File upload state
+  const [files, setFiles] = useState<BatchFile[]>([]);
+  const [language, setLanguage] = useState<'en' | 'fr'>('en');
+  const [jobDescription, setJobDescription] = useState('');
+
+  // Batch state
+  const [currentBatch, setCurrentBatch] = useState<BatchProgress | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [recentBatches, setRecentBatches] = useState<BatchProgress[]>([]);
+
+  // Export state
+  const [selectedResumes, setSelectedResumes] = useState<string[]>([]);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'docx' | 'json' | 'csv'>('json');
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<any>(null);
+
+  // Polling ref
+  const pollRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Fetch recent batches on mount
+  useEffect(() => {
+    fetchRecentBatches();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  // Poll for batch status when processing
+  useEffect(() => {
+    if (currentBatch && currentBatch.status === 'processing') {
+      pollRef.current = setInterval(() => {
+        pollBatchStatus(currentBatch.batchId);
+      }, 2000);
+    } else if (pollRef.current) {
+      clearInterval(pollRef.current);
+    }
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [currentBatch?.status]);
+
+  const fetchRecentBatches = async () => {
+    try {
+      const res = await fetch('/api/resume/batch-status/recent');
+      const data = await res.json();
+      if (data.success) {
+        setRecentBatches(data.batches);
+      }
+    } catch (err) {
+      console.error('Failed to fetch recent batches:', err);
+    }
+  };
+
+  const pollBatchStatus = async (batchId: string) => {
+    try {
+      const res = await fetch(`/api/resume/batch-status/${batchId}`);
+      const data = await res.json();
+      if (data.success) {
+        setCurrentBatch(data);
+        if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+          setIsProcessing(false);
+          fetchRecentBatches();
         }
-     }, 1500); 
-  }
+      }
+    } catch (err) {
+      console.error('Poll error:', err);
+    }
+  };
+
+  // Handle file selection
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const newFiles = Array.from(e.target.files).map(file => ({
+        file,
+        name: file.name,
+        status: 'pending' as const
+      }));
+      setFiles(prev => [...prev, ...newFiles]);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files) {
+      const newFiles = Array.from(e.dataTransfer.files).map(file => ({
+        file,
+        name: file.name,
+        status: 'pending' as const
+      }));
+      setFiles(prev => [...prev, ...newFiles]);
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Upload and create batch
+  const handleUploadBatch = async () => {
+    if (files.length === 0) return;
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('language', language);
+      if (jobDescription.trim()) {
+        formData.append('jobDescription', jobDescription);
+      }
+
+      files.forEach((f, idx) => {
+        formData.append(`file_${idx}`, f.file);
+      });
+
+      const res = await fetch('/api/resume/batch-import', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        // Start processing
+        await startBatchProcessing(data.batchId);
+        setFiles([]);
+      } else {
+        alert(data.error || 'Failed to create batch');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Upload failed');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Start batch processing
+  const startBatchProcessing = async (batchId: string) => {
+    setIsProcessing(true);
+    try {
+      const res = await fetch('/api/resume/batch-process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          batchId,
+          provider: settings?.provider,
+          apiKey: settings?.apiKey,
+          model: settings?.model
+        })
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setCurrentBatch({
+          batchId: data.batchId,
+          totalFiles: data.totalFiles,
+          completedFiles: 0,
+          failedFiles: 0,
+          processingFiles: data.pendingFiles,
+          progressPercentage: 0,
+          status: 'processing',
+          resumes: []
+        });
+      } else {
+        alert(data.error || 'Failed to start processing');
+        setIsProcessing(false);
+      }
+    } catch (err: any) {
+      alert(err.message || 'Processing failed to start');
+      setIsProcessing(false);
+    }
+  };
+
+  // Cancel batch
+  const handleCancelBatch = async () => {
+    if (!currentBatch) return;
+
+    try {
+      await fetch(`/api/resume/batch/${currentBatch.batchId}?action=cancel`, {
+        method: 'DELETE'
+      });
+      setIsProcessing(false);
+      setCurrentBatch(null);
+      fetchRecentBatches();
+    } catch (err) {
+      console.error('Cancel failed:', err);
+    }
+  };
+
+  // Export functionality
+  const handleExport = async () => {
+    if (selectedResumes.length === 0) {
+      alert('Please select resumes to export');
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const res = await fetch('/api/resume/batch-export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resumeIds: selectedResumes,
+          format: exportFormat
+        })
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setExportResult(data);
+      } else {
+        alert(data.error || 'Export failed');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Export failed');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const toggleResumeSelection = (resumeId: string) => {
+    setSelectedResumes(prev =>
+      prev.includes(resumeId)
+        ? prev.filter(id => id !== resumeId)
+        : [...prev, resumeId]
+    );
+  };
+
+  const selectAllCompleted = () => {
+    if (!currentBatch) return;
+    const completedIds = currentBatch.resumes
+      .filter(r => r.status === 'completed')
+      .map(r => r.id);
+    setSelectedResumes(completedIds);
+  };
 
   return (
-    <div className="fixed inset-0 bg-slate-50 z-50 overflow-auto animate-fade-in p-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Layout className="w-6 h-6 text-indigo-600"/> Enterprise Dashboard</h2>
-          <button onClick={onClose} className="bg-white p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100"><X className="w-5 h-5"/></button>
+    <div className="fixed inset-0 bg-slate-50 z-50 overflow-auto animate-fade-in p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            <Layout className="w-6 h-6 text-indigo-600"/> Enterprise Batch Dashboard
+          </h2>
+          <button onClick={onClose} className="bg-white p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100">
+            <X className="w-5 h-5"/>
+          </button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2"><FileStack className="w-4 h-4"/> Batch Processing</h3>
-            <p className="text-sm text-slate-500 mb-4">Process multiple resumes against one job description.</p>
-            <div className="relative h-40 bg-slate-50 rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 text-sm hover:bg-indigo-50 hover:border-indigo-300 transition-colors">
-               <input type="file" multiple className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleBatchUpload} />
-               <FileUp className="w-6 h-6 mb-2"/>
-               {files.length > 0 ? `${files.length} files selected` : "Drag & Drop Folder"}
-            </div>
-            {files.length > 0 && (
-               <div className="mt-4">
-                  <div className="flex justify-between text-xs mb-2"><span>Processing Queue</span><span>{completed.length}/{files.length}</span></div>
-                  <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mb-4">
-                     <div className="bg-indigo-600 h-full transition-all duration-300" style={{width: `${(completed.length/files.length)*100}%`}}></div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Batch Import Panel */}
+          <div className="lg:col-span-2 space-y-6">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                <FileUp className="w-5 h-5 text-indigo-600"/> Batch Import
+              </h3>
+
+              {/* Language & Job Description */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Language</label>
+                  <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value as 'en' | 'fr')}
+                    className="w-full p-2 border border-slate-200 rounded-lg text-sm"
+                  >
+                    <option value="en">English</option>
+                    <option value="fr">French (Français)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                    Target Job Description (Optional - applies to all)
+                  </label>
+                </div>
+              </div>
+
+              <textarea
+                value={jobDescription}
+                onChange={(e) => setJobDescription(e.target.value)}
+                placeholder="Paste job description here to optimize all resumes against the same criteria..."
+                className="w-full h-24 p-3 border border-slate-200 rounded-lg text-sm mb-4 resize-none"
+              />
+
+              {/* File Dropzone */}
+              <div
+                onDrop={handleDrop}
+                onDragOver={(e) => e.preventDefault()}
+                className="relative h-48 bg-slate-50 rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 text-sm hover:bg-indigo-50 hover:border-indigo-300 transition-colors cursor-pointer"
+              >
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.doc,.jpg,.jpeg,.png"
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  onChange={handleFileSelect}
+                />
+                <FileStack className="w-10 h-10 mb-3 text-slate-300"/>
+                <p className="font-medium text-slate-600">Drop files here or click to browse</p>
+                <p className="text-xs text-slate-400 mt-1">PDF, DOCX, JPG, PNG • Max 20 files • 10MB each</p>
+              </div>
+
+              {/* Selected Files List */}
+              {files.length > 0 && (
+                <div className="mt-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm font-medium text-slate-600">{files.length} files selected</span>
+                    <button
+                      onClick={() => setFiles([])}
+                      className="text-xs text-red-500 hover:text-red-700"
+                    >
+                      Clear All
+                    </button>
                   </div>
-                  <button onClick={startBatch} disabled={processing || completed.length === files.length} className="w-full bg-indigo-600 text-white py-2 rounded text-xs font-bold hover:bg-indigo-700 disabled:opacity-50">
-                     {processing ? "Optimizing..." : "Start Batch"}
+                  <div className="max-h-40 overflow-y-auto border border-slate-100 rounded-lg">
+                    {files.map((f, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-2 border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                        <span className="text-sm text-slate-600 truncate flex-1">{f.name}</span>
+                        <button
+                          onClick={() => removeFile(idx)}
+                          className="text-slate-400 hover:text-red-500 ml-2"
+                        >
+                          <X className="w-4 h-4"/>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={handleUploadBatch}
+                    disabled={isUploading || isProcessing}
+                    className="w-full mt-4 bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-wait flex items-center justify-center gap-2"
+                  >
+                    {isUploading ? (
+                      <><Loader2 className="w-4 h-4 animate-spin"/> Uploading...</>
+                    ) : isProcessing ? (
+                      <><Loader2 className="w-4 h-4 animate-spin"/> Processing...</>
+                    ) : (
+                      <><Send className="w-4 h-4"/> Upload & Start Processing</>
+                    )}
                   </button>
-               </div>
+                </div>
+              )}
+            </div>
+
+            {/* Batch Status Panel */}
+            {(currentBatch || recentBatches.length > 0) && (
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-indigo-600"/> Batch Status
+                </h3>
+
+                {currentBatch && (
+                  <div className="mb-6">
+                    {/* Progress Bar */}
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium text-slate-600">
+                        Batch: {currentBatch.batchId.substring(0, 20)}...
+                      </span>
+                      <span className={`text-xs font-bold px-2 py-1 rounded ${
+                        currentBatch.status === 'completed' ? 'bg-emerald-100 text-emerald-700' :
+                        currentBatch.status === 'processing' ? 'bg-blue-100 text-blue-700' :
+                        currentBatch.status === 'failed' ? 'bg-red-100 text-red-700' :
+                        'bg-slate-100 text-slate-700'
+                      }`}>
+                        {currentBatch.status.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden mb-3">
+                      <div
+                        className="bg-indigo-600 h-full transition-all duration-500"
+                        style={{ width: `${currentBatch.progressPercentage}%` }}
+                      />
+                    </div>
+
+                    <div className="flex justify-between text-xs text-slate-500 mb-4">
+                      <span>Completed: {currentBatch.completedFiles}</span>
+                      <span>Failed: {currentBatch.failedFiles}</span>
+                      <span>Processing: {currentBatch.processingFiles}</span>
+                      <span>Total: {currentBatch.totalFiles}</span>
+                    </div>
+
+                    {/* File Status List */}
+                    {currentBatch.resumes.length > 0 && (
+                      <div className="max-h-60 overflow-y-auto border border-slate-100 rounded-lg">
+                        {currentBatch.resumes.map((resume) => (
+                          <div
+                            key={resume.id}
+                            className="flex items-center justify-between p-3 border-b border-slate-100 last:border-0 hover:bg-slate-50"
+                          >
+                            <div className="flex items-center gap-2 flex-1">
+                              {resume.status === 'completed' ? (
+                                <CheckCircle className="w-4 h-4 text-emerald-500"/>
+                              ) : resume.status === 'processing' ? (
+                                <Loader2 className="w-4 h-4 text-blue-500 animate-spin"/>
+                              ) : resume.status === 'failed' ? (
+                                <AlertCircle className="w-4 h-4 text-red-500"/>
+                              ) : (
+                                <div className="w-4 h-4 rounded-full border-2 border-slate-300"/>
+                              )}
+                              <span className="text-sm text-slate-600 truncate">{resume.fileName}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {resume.status === 'completed' && (
+                                <>
+                                  {resume.atsScoreAfter && (
+                                    <span className="text-xs font-bold text-emerald-600">
+                                      {resume.atsScoreAfter}%
+                                    </span>
+                                  )}
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedResumes.includes(resume.id)}
+                                    onChange={() => toggleResumeSelection(resume.id)}
+                                    className="w-4 h-4"
+                                  />
+                                </>
+                              )}
+                              {resume.status === 'failed' && resume.errorMessage && (
+                                <span className="text-xs text-red-500">{resume.errorMessage}</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Cancel Button */}
+                    {currentBatch.status === 'processing' && (
+                      <button
+                        onClick={handleCancelBatch}
+                        className="w-full mt-4 bg-red-50 text-red-600 py-2 rounded-lg font-medium hover:bg-red-100 border border-red-200"
+                      >
+                        Cancel Batch
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Recent Batches */}
+                {recentBatches.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-500 uppercase mb-2">Recent Batches</h4>
+                    <div className="space-y-2">
+                      {recentBatches.slice(0, 5).map((batch) => (
+                        <div
+                          key={batch.batchId}
+                          className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 cursor-pointer"
+                          onClick={() => setCurrentBatch(batch)}
+                        >
+                          <div>
+                            <span className="text-sm font-medium text-slate-700">
+                              {batch.batchId.substring(0, 20)}...
+                            </span>
+                            <div className="text-xs text-slate-500">
+                              {batch.completedFiles}/{batch.totalFiles} files • {batch.progressPercentage}%
+                            </div>
+                          </div>
+                          <span className={`text-xs font-bold px-2 py-1 rounded ${
+                            batch.status === 'completed' ? 'bg-emerald-100 text-emerald-700' :
+                            batch.status === 'processing' ? 'bg-blue-100 text-blue-700' :
+                            batch.status === 'failed' ? 'bg-red-100 text-red-700' :
+                            'bg-slate-100 text-slate-700'
+                          }`}>
+                            {batch.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2"><Activity className="w-4 h-4"/> Analytics</h3>
-            <div className="space-y-4">
-              <div className="flex justify-between text-sm"><span className="text-slate-500">Success Rate</span><span className="font-bold text-emerald-600">78%</span></div>
-              <div className="flex justify-between text-sm"><span className="text-slate-500">Avg Score</span><span className="font-bold text-indigo-600">85/100</span></div>
-              <div className="h-2 bg-slate-100 rounded-full overflow-hidden"><div className="w-3/4 h-full bg-indigo-500"></div></div>
+
+          {/* Right Sidebar */}
+          <div className="space-y-6">
+            {/* Export Panel */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                <FileDown className="w-5 h-5 text-indigo-600"/> Batch Export
+              </h3>
+
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Export Format</label>
+                <select
+                  value={exportFormat}
+                  onChange={(e) => setExportFormat(e.target.value as any)}
+                  className="w-full p-2 border border-slate-200 rounded-lg text-sm"
+                >
+                  <option value="json">JSON</option>
+                  <option value="csv">CSV</option>
+                  <option value="docx">DOCX (Word)</option>
+                  <option value="pdf">PDF</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-sm text-slate-600">{selectedResumes.length} selected</span>
+                <button
+                  onClick={selectAllCompleted}
+                  className="text-xs text-indigo-600 hover:text-indigo-700"
+                >
+                  Select All Completed
+                </button>
+              </div>
+
+              <button
+                onClick={handleExport}
+                disabled={isExporting || selectedResumes.length === 0}
+                className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-wait flex items-center justify-center gap-2"
+              >
+                {isExporting ? (
+                  <><Loader2 className="w-4 h-4 animate-spin"/> Exporting...</>
+                ) : (
+                  <><Download className="w-4 h-4"/> Export Selected</>
+                )}
+              </button>
+
+              {exportResult && (
+                <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                  <p className="text-sm font-medium text-emerald-700 mb-2">Export Ready!</p>
+                  <div className="space-y-1">
+                    {exportResult.files?.map((f: any) => (
+                      <a
+                        key={f.name}
+                        href={f.downloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-xs text-indigo-600 hover:underline"
+                      >
+                        {f.name}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2"><Users className="w-4 h-4"/> Team Templates</h3>
-            <div className="space-y-2">
-              <div className="p-2 bg-slate-50 rounded text-sm border border-slate-100 cursor-pointer hover:bg-indigo-50">Pilot - Emirates Standard</div>
-              <div className="p-2 bg-slate-50 rounded text-sm border border-slate-100 cursor-pointer hover:bg-indigo-50">Cabin Crew - Ryanair</div>
-              <div className="p-2 bg-slate-50 rounded text-sm border border-slate-100 cursor-pointer hover:bg-indigo-50">Ground Ops - Delta</div>
+
+            {/* Analytics Panel */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                <BarChart2 className="w-5 h-5 text-indigo-600"/> Analytics
+              </h3>
+              <div className="space-y-4">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Total Batches</span>
+                  <span className="font-bold text-slate-800">{recentBatches.length}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Success Rate</span>
+                  <span className="font-bold text-emerald-600">
+                    {recentBatches.length > 0
+                      ? Math.round(
+                          recentBatches.filter(b => b.status === 'completed').length /
+                          recentBatches.length * 100
+                        )
+                      : 0}%
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Total Resumes</span>
+                  <span className="font-bold text-indigo-600">
+                    {recentBatches.reduce((sum, b) => sum + b.totalFiles, 0)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Team Templates */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                <Users className="w-5 h-5 text-indigo-600"/> Team Templates
+              </h3>
+              <div className="space-y-2">
+                <div className="p-3 bg-slate-50 rounded-lg text-sm border border-slate-100 cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 transition-colors">
+                  <span className="font-medium text-slate-700">Pilot - Emirates Standard</span>
+                  <p className="text-xs text-slate-500 mt-1">Aviation-specific optimization</p>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-lg text-sm border border-slate-100 cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 transition-colors">
+                  <span className="font-medium text-slate-700">Cabin Crew - Ryanair</span>
+                  <p className="text-xs text-slate-500 mt-1">Service excellence focus</p>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-lg text-sm border border-slate-100 cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 transition-colors">
+                  <span className="font-medium text-slate-700">Ground Ops - Delta</span>
+                  <p className="text-xs text-slate-500 mt-1">Operations & logistics</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 const SimulatorModal = ({ isOpen, onClose, simulatorData }) => {
@@ -920,7 +1471,7 @@ export default function ATSApp() {
       <HistorySidebar isOpen={showHistory} onClose={() => setShowHistory(false)} history={history} onLoad={loadFromHistory} onDelete={deleteHistoryItem} />
       <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} settings={settings} setSettings={setSettings} />
       <SimulatorModal isOpen={showSimulator} onClose={() => setShowSimulator(false)} simulatorData={simulatorData} />
-      {showDashboard && <DashboardView onClose={() => setShowDashboard(false)} />}
+      {showDashboard && <DashboardView onClose={() => setShowDashboard(false)} settings={settings} />}
       
       {/* MOCK GOOGLE AUTH POPUP */}
       {showAuthModal && (
