@@ -1326,53 +1326,106 @@ Now optimize following ALL modules strictly. Return ONLY the JSON.
 
   const downloadPdf = async () => {
     try {
-      // Use html2canvas approach for more reliable PDF generation
       const element = resumePreviewRef.current;
       if (!element) {
         throw new Error('Preview element not found');
       }
 
-      // Dynamic import of html2canvas for better reliability
+      // Show generating notification
+      setPdfFallbackNotification('Generating PDF...');
+
+      // Create a clone container with proper A4 styling
+      const cloneContainer = document.createElement('div');
+      cloneContainer.style.cssText = `
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 794px;
+        min-height: 1123px;
+        background: white;
+        padding: 36px;
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 12pt;
+        line-height: 1.15;
+        color: #1a1a1a;
+        z-index: -9999;
+        opacity: 0;
+      `;
+      
+      // Add inline styles for HTML elements
+      const styleElement = document.createElement('style');
+      styleElement.textContent = `
+        #pdf-clone h1 { font-size: 16pt; font-weight: bold; text-transform: uppercase; margin: 0 0 3pt 0; text-align: center; }
+        #pdf-clone h4 { font-size: 12pt; margin: 0 0 2pt 0; font-weight: normal; text-align: center; }
+        #pdf-clone p { margin: 0 0 6pt 0; }
+        #pdf-clone p strong { font-weight: bold; display: block; margin-top: 8pt; margin-bottom: 3pt; text-transform: uppercase; }
+        #pdf-clone ul { margin: 0 0 6pt 18pt; padding: 0; list-style-type: none; }
+        #pdf-clone li { display: list-item; margin: 0 0 4pt 0; line-height: 1.25; }
+        #pdf-clone li::before { content: "• "; margin-left: -1em; }
+      `;
+      cloneContainer.id = 'pdf-clone';
+      cloneContainer.appendChild(styleElement);
+      
+      // Clone the content
+      const contentDiv = document.createElement('div');
+      contentDiv.innerHTML = element.innerHTML;
+      cloneContainer.appendChild(contentDiv);
+      document.body.appendChild(cloneContainer);
+
+      // Dynamic import of html2canvas
       const html2canvas = (await import('html2canvas')).default;
       
-      // Capture the element as canvas
-      const canvas = await html2canvas(element, {
+      // Wait for styles to apply
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Capture the cloned element
+      const canvas = await html2canvas(cloneContainer, {
         scale: 2,
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff',
-        windowWidth: 800
+        width: 794,
+        height: 1123
       });
       
-      // Create PDF from canvas
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const imgData = canvas.toDataURL('image/png');
+      // Remove the clone
+      document.body.removeChild(cloneContainer);
       
-      // A4 dimensions in mm
+      // Create PDF from canvas
+      const pdf = new jsPDF({ 
+        orientation: 'portrait', 
+        unit: 'mm', 
+        format: 'a4',
+        compress: true
+      });
+      
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      
+      // A4 dimensions
       const pageWidth = 210;
       const pageHeight = 297;
-      const margin = 9.5; // 0.95cm
-      const contentWidth = pageWidth - (margin * 2);
-      const contentHeight = pageHeight - (margin * 2);
+      const margin = 9.5;
       
-      // Calculate image dimensions to fit
-      const imgWidth = canvas.width;
-      const imgHeight = canvas.height;
-      const ratio = contentWidth / (imgWidth * 0.264583); // Convert px to mm
-      const scaledHeight = imgHeight * 0.264583 * ratio;
+      // Add image to PDF (full page)
+      pdf.addImage(imgData, 'JPEG', margin, margin, pageWidth - margin * 2, pageHeight - margin * 2);
       
-      // Add image to PDF
-      pdf.addImage(imgData, 'PNG', margin, margin, contentWidth, Math.min(scaledHeight, contentHeight));
-      
+      // Save PDF
       pdf.save('Optimized_Resume.pdf');
+      
+      // Clear notification
+      setPdfFallbackNotification(null);
+      
     } catch (error) {
       console.error('PDF generation failed:', error);
-      // Automatically fallback to DOCX with notification
+      // Clean up any remaining clone
+      const clone = document.getElementById('pdf-clone');
+      if (clone) document.body.removeChild(clone);
+      
+      // Fallback to DOCX
       if (result?.optimized_content) {
-        setPdfFallbackNotification('PDF generation in progress... Trying DOCX format.');
+        setPdfFallbackNotification('PDF generation failed. Generating DOCX...');
         await downloadDocx(result.optimized_content, 'Optimized_Resume.docx');
         setPdfFallbackNotification('PDF generation failed. The file has been generated in DOCX format instead.');
-        // Auto-hide notification after 5 seconds
         setTimeout(() => setPdfFallbackNotification(null), 5000);
       }
     }
