@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   Upload, FileText, CheckCircle, AlertCircle, RefreshCw, ChevronRight, BarChart2, 
   Download, Copy, Briefcase, FileUp, FileDown, Loader2, Search, Mail, MessageSquare, 
@@ -311,8 +311,6 @@ export default function ATSApp() {
     activeModel: 'gemini-2.0-flash',
     apiKeys: {}
   });
-  const [charCount, setCharCount] = useState(0);
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('classic');
   const [resumeHistory, setResumeHistory] = useState<ResumeHistory[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [linkedinResult, setLinkedinResult] = useState<string | null>(null);
@@ -329,6 +327,14 @@ export default function ATSApp() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resumePreviewRef = useRef<HTMLDivElement>(null);
+
+  // Memoized character count for performance
+  const charCount = useMemo(() => {
+    if (result?.optimized_content) {
+      return result.optimized_content.replace(/<[^>]*>/g, '').length;
+    }
+    return 0;
+  }, [result?.optimized_content]);
 
   // Load settings from localStorage
   useEffect(() => {
@@ -356,14 +362,6 @@ export default function ATSApp() {
   useEffect(() => {
     localStorage.setItem('ats_app_settings', JSON.stringify(appSettings));
   }, [appSettings]);
-
-  // Update character count
-  useEffect(() => {
-    if (result?.optimized_content) {
-      const text = result.optimized_content.replace(/<[^>]*>/g, '');
-      setCharCount(text.length);
-    }
-  }, [result]);
 
   // Global styles
   useEffect(() => {
@@ -1328,24 +1326,50 @@ Now optimize following ALL modules strictly. Return ONLY the JSON.
 
   const downloadPdf = async () => {
     try {
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      // Use html2canvas approach for more reliable PDF generation
       const element = resumePreviewRef.current;
       if (!element) {
         throw new Error('Preview element not found');
       }
+
+      // Dynamic import of html2canvas for better reliability
+      const html2canvas = (await import('html2canvas')).default;
       
-      await pdf.html(element, {
-        x: 12.7,
-        y: 12.7,
-        width: 184.6,
+      // Capture the element as canvas
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
         windowWidth: 800
       });
+      
+      // Create PDF from canvas
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const imgData = canvas.toDataURL('image/png');
+      
+      // A4 dimensions in mm
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const margin = 9.5; // 0.95cm
+      const contentWidth = pageWidth - (margin * 2);
+      const contentHeight = pageHeight - (margin * 2);
+      
+      // Calculate image dimensions to fit
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      const ratio = contentWidth / (imgWidth * 0.264583); // Convert px to mm
+      const scaledHeight = imgHeight * 0.264583 * ratio;
+      
+      // Add image to PDF
+      pdf.addImage(imgData, 'PNG', margin, margin, contentWidth, Math.min(scaledHeight, contentHeight));
       
       pdf.save('Optimized_Resume.pdf');
     } catch (error) {
       console.error('PDF generation failed:', error);
-      // Automatically fallback to DOCX
+      // Automatically fallback to DOCX with notification
       if (result?.optimized_content) {
+        setPdfFallbackNotification('PDF generation in progress... Trying DOCX format.');
         await downloadDocx(result.optimized_content, 'Optimized_Resume.docx');
         setPdfFallbackNotification('PDF generation failed. The file has been generated in DOCX format instead.');
         // Auto-hide notification after 5 seconds
@@ -1725,7 +1749,6 @@ Now optimize following ALL modules strictly. Return ONLY the JSON.
                       <div
                         id="resume-preview"
                         ref={resumePreviewRef}
-                        contentEditable
                         suppressContentEditableWarning
                         className="outline-none"
                         dangerouslySetInnerHTML={{ __html: result.optimized_content }}
@@ -1737,7 +1760,7 @@ Now optimize following ALL modules strictly. Return ONLY the JSON.
             </div>
             
             {/* Right Sidebar - Actions */}
-            <div className="lg:col-span-3 space-y-4">
+            <div className="lg:col-span-3 space-y-4 relative z-10 pointer-events-auto">
               {/* Save to History Button */}
               <button
                 onClick={saveToHistory}

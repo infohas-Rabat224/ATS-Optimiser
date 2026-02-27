@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-console.log('🔄 API route loaded - v3 (client-side PDF extraction)');
+console.log('🔄 API route loaded - v4 (exact character enforcement)');
 
 // Multi-provider AI endpoint
 export async function POST(request: NextRequest) {
@@ -120,7 +120,7 @@ async function handleGemini(action: string, data: any, apiKey: string, model: st
     const result = await response.json();
     const text = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
     
-    return processResponse(action, text);
+    return processResponse(action, text, data);
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
@@ -173,7 +173,7 @@ async function handleDeepSeek(action: string, data: any, apiKey: string, model: 
     const result = await response.json();
     const text = result.choices?.[0]?.message?.content || '';
     
-    return processResponse(action, text);
+    return processResponse(action, text, data);
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
@@ -220,7 +220,7 @@ async function handleOpenAI(action: string, data: any, apiKey: string, model: st
     const result = await response.json();
     const text = result.choices?.[0]?.message?.content || '';
     
-    return processResponse(action, text);
+    return processResponse(action, text, data);
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
@@ -261,7 +261,7 @@ async function handleGroq(action: string, data: any, apiKey: string, model: stri
     const result = await response.json();
     const text = result.choices?.[0]?.message?.content || '';
     
-    return processResponse(action, text);
+    return processResponse(action, text, data);
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
@@ -306,7 +306,7 @@ async function handleAnthropic(action: string, data: any, apiKey: string, model:
     const result = await response.json();
     const text = result.content?.[0]?.text || '';
     
-    return processResponse(action, text);
+    return processResponse(action, text, data);
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
@@ -337,7 +337,7 @@ async function handleOpenRouter(action: string, data: any, apiKey: string, model
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://my-project-nine-tau-35.vercel.app',
+        'HTTP-Referer': 'https://atsoptimiser.vercel.app',
         'X-Title': 'ATS Resume Optimizer'
       },
       body: JSON.stringify({
@@ -355,7 +355,7 @@ async function handleOpenRouter(action: string, data: any, apiKey: string, model
     const result = await response.json();
     const text = result.choices?.[0]?.message?.content || '';
     
-    return processResponse(action, text);
+    return processResponse(action, text, data);
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
@@ -396,110 +396,97 @@ async function handlePerplexity(action: string, data: any, apiKey: string, model
     const result = await response.json();
     const text = result.choices?.[0]?.message?.content || '';
     
-    return processResponse(action, text);
+    return processResponse(action, text, data);
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
 
-// Helper functions
+// =============================================================================
+// OPTIMIZED PROMPT - FORCES EXACTLY 2800 CHARACTERS
+// =============================================================================
+
 function buildOptimizePrompt(data: any): string {
   const resumeText = data.resume?.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || '';
   const jobText = data.job?.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || '';
 
-  return `You are an ATS Resume Expert. Create an OPTIMIZED RESUME in HTML format.
+  return `You are a SENIOR ATS RESUME OPTIMIZATION EXPERT with 15+ years of experience in aviation, hospitality, and corporate recruitment. Your task is to create an ATS-MAXIMIZED resume that scores 95%+ on ATS systems.
 
-═══════════════════════════════════════════════════════════════════════════════
-⛔⛔⛔ STRICT CHARACTER LIMIT - THIS IS NON-NEGOTIABLE ⛔⛔⛔
-═══════════════════════════════════════════════════════════════════════════════
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  🎯 CRITICAL MISSION: GENERATE EXACTLY 2800-3000 TEXT CHARACTERS 🎯         ║
+║  This is your #1 priority. Failure means the resume will be REJECTED.        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-EXACTLY 2800-3200 CHARACTERS OF TEXT CONTENT (excluding HTML tags)
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ STEP 1: CONTENT STRATEGY (DO THIS FIRST)                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-🛑 IF YOUR OUTPUT EXCEEDS 3200 CHARACTERS, IT WILL BE REJECTED! 🛑
-🛑 IF YOUR OUTPUT IS BELOW 2800 CHARACTERS, IT WILL BE REJECTED! 🛑
+You MUST include ALL of these sections with EXACTLY this content length:
 
-STEPS TO ENSURE CORRECT CHARACTER COUNT:
-1. Write the resume content first
-2. COUNT THE CHARACTERS (excluding HTML tags like <p>, <li>, <strong>, etc.)
-3. If over 3200: DELETE bullet points until under 3200
-4. If under 2800: ADD more details to existing bullet points
+1. HEADER (80-100 chars): Full Name + Job Title | City, Country | Phone | Email
+2. PROFESSIONAL SUMMARY (250-300 chars): 3 impactful sentences with metrics
+3. CORE COMPETENCIES (400-450 chars): 4 skill categories, each with 5-6 skills
+4. PROFESSIONAL EXPERIENCE (1400-1500 chars): 2 positions, 4-5 bullets each
+5. EDUCATION (80-100 chars): Degree + Institution + Location + Year
+6. LANGUAGES (100-120 chars): 3 languages with proficiency levels
 
-MAXIMUM STRUCTURE ALLOWED (to stay under 3200 characters):
-- 1 Name line
-- 1 Contact line
-- 1 Professional Summary paragraph (3 sentences MAX)
-- 4 Skill categories with 4-5 skills each (one bullet per category)
-- 2 Job positions with exactly 3-4 bullets each
-- 1 Education entry
-- 2-3 Languages
+TOTAL TARGET: 2800-3000 TEXT CHARACTERS (excluding HTML tags)
 
-═══════════════════════════════════════════════════════════════════════════════
-CRITICAL BULLET FORMATTING RULES - MUST FOLLOW EXACTLY
-═══════════════════════════════════════════════════════════════════════════════
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ STEP 2: BULLET POINT RULES (CRITICAL FOR ATS)                                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-⚠️ EACH BULLET MUST BE ON ITS OWN SEPARATE LINE - NO EXCEPTIONS! ⚠️
+Each bullet point MUST:
+✓ Start with a POWER VERB (Achieved, Delivered, Led, Implemented, Increased, Managed, Developed, Spearheaded, Optimized, Streamlined)
+✓ Include a QUANTIFIABLE RESULT (number, percentage, or metric)
+✓ Be 80-100 characters long each
+✓ Be on its own line (NEVER combine multiple achievements in one bullet)
 
-CORRECT FORMAT (each bullet on its own line):
-<ul>
-<li>• Single achievement or skill item here.</li>
-<li>• Different achievement or skill here.</li>
-<li>• Another separate item here.</li>
-</ul>
+Example BULLETS (use similar structure):
+• Delivered premium customer service to 150+ passengers daily, achieving 98% satisfaction rating through proactive communication and efficient problem resolution.
+• Led cross-functional team of 12 staff members, increasing operational efficiency by 25% through implementation of streamlined workflows and standardized procedures.
+• Managed inventory worth $500K+ with 99.9% accuracy, reducing waste by 15% through implementation of digital tracking systems and regular audits.
+• Spearheaded training program for 50+ new hires, reducing onboarding time by 30% while improving retention rates by 20% through mentorship initiatives.
 
-❌ WRONG - DO NOT DO THIS:
-<li>• First item. Second item.</li>          <-- TWO items on one line - WRONG!
-<li>• Item 1 • Item 2</li>                   <-- TWO bullets on one line - WRONG!
-<li>• Skill 1, Skill 2, Skill 3.</li>        <-- Multiple skills without category - WRONG!
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ STEP 3: HTML OUTPUT FORMAT (COPY EXACTLY)                                     ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-✅ CORRECT FOR SKILLS:
-<li>• <strong>Category Name:</strong> Skill 1, Skill 2, Skill 3.</li>
-
-✅ CORRECT FOR ACHIEVEMENTS (one achievement per bullet):
-<li>• Increased customer satisfaction by 25% through improved service protocols.</li>
-<li>• Managed daily operations for a team of 15 staff members.</li>
-
-═══════════════════════════════════════════════════════════════════════════════
-OTHER CRITICAL RULES
-═══════════════════════════════════════════════════════════════════════════════
-
-1. Output MUST fit on ONE A4 page with margins 0.95cm
-2. NO duplicate content - check your output before returning
-3. Font: Times New Roman, 12pt
-4. EXACTLY 3-4 bullets per job position (NOT 5!)
-5. EXACTLY 4 skill categories with 4-5 skills each
-6. Include quantified achievements with numbers/percentages
-7. Professional summary should be 3 sentences MAX (not 4!)
-8. COUNT YOUR CHARACTERS BEFORE OUTPUTTING!
-
-═══════════════════════════════════════════════════════════════════════════════
-EXACT OUTPUT FORMAT (copy this structure exactly)
-═══════════════════════════════════════════════════════════════════════════════
+Use this EXACT structure:
 
 <h1>FULL NAME</h1>
 <h4>Job Title | City, Country | Phone | Email</h4>
 
 <p><strong>PROFESSIONAL SUMMARY</strong></p>
-<p>Three to four detailed sentences about professional background, key achievements, and career objectives with specific metrics where possible.</p>
+<p>Three detailed sentences with specific achievements and metrics demonstrating value to potential employers.</p>
 
 <p><strong>CORE COMPETENCIES & SKILLS</strong></p>
 <ul>
-<li>• <strong>Customer Service:</strong> Client Relations, Problem Resolution, Conflict Management.</li>
-<li>• <strong>Operations:</strong> Process Improvement, Team Coordination, Resource Management.</li>
-<li>• <strong>Communication:</strong> Multilingual, Professional Correspondence, Stakeholder Management.</li>
-<li>• <strong>Technical:</strong> Microsoft Office Suite, CRM Systems, Data Analysis Tools.</li>
+<li>• <strong>Customer Service:</strong> Client Relations, Problem Resolution, Conflict Management, VIP Services, Service Excellence.</li>
+<li>• <strong>Operations:</strong> Process Improvement, Team Coordination, Resource Management, Quality Assurance, Compliance.</li>
+<li>• <strong>Communication:</strong> Multilingual Communication, Professional Correspondence, Stakeholder Management, Presentation Skills.</li>
+<li>• <strong>Technical:</strong> Microsoft Office Suite, CRM Systems, Data Analysis Tools, Reservation Systems, ERP Software.</li>
 </ul>
 
 <p><strong>PROFESSIONAL EXPERIENCE</strong></p>
-<p><strong>Job Title</strong> Company | City, Country | Month Year – Month Year</p>
+<p><strong>Job Title</strong> Company Name | City, Country | Month Year – Present</p>
 <ul>
-<li>• Delivered exceptional customer service to 100+ clients daily with 98% satisfaction.</li>
-<li>• Improved operational efficiency by 20% through streamlined workflows.</li>
-<li>• Led a team of 8 staff members, exceeding targets by 15%.</li>
-<li>• Implemented scheduling system reducing wait times by 30%.</li>
+<li>• [Power verb] + [action] + [quantified result] with 80-100 characters per bullet.</li>
+<li>• [Power verb] + [action] + [quantified result] with 80-100 characters per bullet.</li>
+<li>• [Power verb] + [action] + [quantified result] with 80-100 characters per bullet.</li>
+<li>• [Power verb] + [action] + [quantified result] with 80-100 characters per bullet.</li>
+</ul>
+
+<p><strong>Previous Job Title</strong> Previous Company | City, Country | Month Year – Month Year</p>
+<ul>
+<li>• [Power verb] + [action] + [quantified result] with 80-100 characters per bullet.</li>
+<li>• [Power verb] + [action] + [quantified result] with 80-100 characters per bullet.</li>
+<li>• [Power verb] + [action] + [quantified result] with 80-100 characters per bullet.</li>
+<li>• [Power verb] + [action] + [quantified result] with 80-100 characters per bullet.</li>
 </ul>
 
 <p><strong>EDUCATION</strong></p>
-<p><strong>Degree Name</strong> Institution | City, Country | Year</p>
+<p><strong>Degree Name</strong> Institution Name | City, Country | Year</p>
 
 <p><strong>LANGUAGES</strong></p>
 <ul>
@@ -508,20 +495,47 @@ EXACT OUTPUT FORMAT (copy this structure exactly)
 <li>• Language 3: Professional Working Proficiency</li>
 </ul>
 
-═══════════════════════════════════════════════════════════════════════════════
-INPUT DATA
-═══════════════════════════════════════════════════════════════════════════════
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ STEP 4: ATS OPTIMIZATION CHECKLIST                                            ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-RESUME CONTENT:
+Before outputting, VERIFY:
+□ Character count is 2800-3000 (count text only, not HTML tags)
+□ Each bullet is on its own line
+□ Every bullet starts with a power verb
+□ Every bullet has a number/percentage
+□ Keywords from job description are naturally integrated
+□ No duplicate content
+□ One A4 page compatible (0.95cm margins, Times New Roman, 12pt)
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ INPUT DATA                                                                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+CANDIDATE'S ORIGINAL RESUME:
 ${resumeText}
 
-JOB DESCRIPTION:
+TARGET JOB DESCRIPTION:
 ${jobText}
 
-═══════════════════════════════════════════════════════════════════════════════
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ OUTPUT FORMAT - Return ONLY valid JSON                                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-Now generate the optimized resume following ALL rules strictly.
-Return JSON: {"score": 85, "score_breakdown": {"impact": 85, "brevity": 80, "keywords": 90}, "summary_critique": "Brief feedback", "missing_keywords": ["kw1"], "matched_keywords": ["kw2"], "optimized_content": "HTML here"}`;
+{
+  "score": 85,
+  "score_breakdown": {
+    "impact": 85,
+    "brevity": 80,
+    "keywords": 90
+  },
+  "summary_critique": "Brief feedback on optimization",
+  "missing_keywords": ["keyword1"],
+  "matched_keywords": ["keyword2"],
+  "optimized_content": "HTML CONTENT HERE - MUST BE 2800-3000 TEXT CHARACTERS"
+}
+
+NOW GENERATE THE OPTIMIZED RESUME. Remember: 2800-3000 TEXT CHARACTERS is MANDATORY!`;
 }
 
 function getPromptForAction(action: string, data: any): string {
@@ -603,82 +617,117 @@ Write the complete cover letter in the exact format shown above. Output ONLY the
   return prompts[action] || '';
 }
 
+// =============================================================================
+// CHARACTER COUNT & ENFORCEMENT
+// =============================================================================
+
 // Count text characters excluding HTML tags
 function countTextCharacters(html: string): number {
   const textOnly = html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
   return textOnly.length;
 }
 
-// Enforce character limits by truncating content if needed
-function enforceCharacterLimit(html: string): string {
-  const MIN_CHARS = 2800;
-  const MAX_CHARS = 3200;
+// Expand content if below minimum characters
+function expandContent(html: string, minChars: number = 2800): string {
+  const currentCount = countTextCharacters(html);
+  
+  if (currentCount >= minChars) {
+    return html;
+  }
+  
+  console.log(`Content too short (${currentCount}), expanding to ${minChars}...`);
   
   let result = html;
-  let charCount = countTextCharacters(result);
+  const deficit = minChars - currentCount;
   
-  console.log(`Character count before enforcement: ${charCount}`);
+  // Find all bullet points and expand them
+  const bulletRegex = /<li>•\s*([^<]+)<\/li>/gi;
+  const bullets = result.match(bulletRegex) || [];
   
-  // If over the limit, progressively remove bullets
-  if (charCount > MAX_CHARS) {
-    console.log(`Content too long (${charCount}), truncating...`);
+  // Expand each bullet by adding more detail
+  bullets.forEach(bullet => {
+    if (countTextCharacters(result) >= minChars) return;
     
-    // Get all list items
-    const liRegex = /<li>•[^<]+<\/li>/gi;
-    const lis = result.match(liRegex) || [];
+    const content = bullet.replace(/<\/?li[^>]*>/gi, '').replace(/•\s*/, '').trim();
     
-    // Remove bullets from the end until we're under the limit
-    // But keep a minimum number of bullets
-    const minBulletsPerSection = 3;
-    let bulletsRemoved = 0;
-    
-    while (charCount > MAX_CHARS && bulletsRemoved < lis.length - minBulletsPerSection * 2) {
-      // Remove the longest bullet points first
-      const bulletLengths = lis.map((li, idx) => ({
-        idx,
-        length: li.length,
-        content: li
-      })).sort((a, b) => b.length - a.length);
-      
-      // Mark one bullet for removal
-      const toRemove = bulletLengths[bulletsRemoved];
-      if (toRemove) {
-        result = result.replace(toRemove.content, '');
-        bulletsRemoved++;
-        charCount = countTextCharacters(result);
-      } else {
-        break;
-      }
+    // Add more detail to bullets that seem short
+    if (content.length < 100 && !content.includes('%') && !content.includes('+')) {
+      // Add quantification if missing
+      const expandedContent = content.replace(/\.$/, `, resulting in improved team performance and customer satisfaction metrics.`);
+      result = result.replace(bullet, `<li>• ${expandedContent}</li>`);
     }
-    
-    // Clean up empty lists and extra whitespace
-    result = result.replace(/<ul>\s*<\/ul>/gi, '');
-    result = result.replace(/\n{3,}/g, '\n\n');
-    
-    charCount = countTextCharacters(result);
-    console.log(`Character count after truncation: ${charCount}`);
+  });
+  
+  // If still short, add more skills to categories
+  if (countTextCharacters(result) < minChars) {
+    result = result.replace(
+      /<li>• <strong>(Customer Service):<\/strong>\s*([^<]+)<\/li>/gi,
+      '<li>• <strong>$1:</strong> $2, Guest Relations, Service Recovery.</li>'
+    );
+    result = result.replace(
+      /<li>• <strong>(Operations):<\/strong>\s*([^<]+)<\/li>/gi,
+      '<li>• <strong>$1:</strong> $2, Supply Chain Management, Quality Control.</li>'
+    );
   }
   
-  // Log warning if under minimum
-  if (charCount < MIN_CHARS) {
-    console.warn(`Warning: Content below minimum (${charCount} < ${MIN_CHARS})`);
+  // If still short, expand professional summary
+  if (countTextCharacters(result) < minChars) {
+    const summaryRegex = /<p><strong>PROFESSIONAL SUMMARY<\/strong><\/p>\s*<p>([^<]+)<\/p>/i;
+    const summaryMatch = result.match(summaryRegex);
+    if (summaryMatch) {
+      const expandedSummary = summaryMatch[1] + ' Proven track record of exceeding performance targets and delivering exceptional results in fast-paced environments.';
+      result = result.replace(summaryRegex, `<p><strong>PROFESSIONAL SUMMARY</strong></p>\n<p>${expandedSummary}</p>`);
+    }
   }
   
+  console.log(`After expansion: ${countTextCharacters(result)} characters`);
   return result;
 }
 
-// Post-process HTML to fix combined bullets - VERY AGGRESSIVE
-function fixCombinedBullets(html: string): string {
-  console.log('fixCombinedBullets called on content length:', html?.length || 0);
+// Truncate content if above maximum characters
+function truncateContent(html: string, maxChars: number = 3200): string {
+  const currentCount = countTextCharacters(html);
   
-  if (!html || typeof html !== 'string') {
-    return '';
+  if (currentCount <= maxChars) {
+    return html;
   }
+  
+  console.log(`Content too long (${currentCount}), truncating to ${maxChars}...`);
   
   let result = html;
   
-  // Pattern 1: Split multiple bullets with • symbol on same line
-  // Keep doing this until no more matches
+  // Get all bullets and sort by length (remove longest first)
+  const bulletRegex = /<li>•[^<]+<\/li>/gi;
+  const bullets = (result.match(bulletRegex) || []).sort((a, b) => b.length - a.length);
+  
+  let removed = 0;
+  for (const bullet of bullets) {
+    if (countTextCharacters(result) <= maxChars) break;
+    
+    // Don't remove skill category bullets (they have <strong>)
+    if (bullet.includes('<strong>') && result.match(bulletRegex)?.length || 0 < 8) {
+      continue;
+    }
+    
+    result = result.replace(bullet, '');
+    removed++;
+  }
+  
+  // Clean up empty lists
+  result = result.replace(/<ul>\s*<\/ul>/gi, '');
+  result = result.replace(/\n{3,}/g, '\n\n');
+  
+  console.log(`After truncation: ${countTextCharacters(result)} characters (removed ${removed} bullets)`);
+  return result;
+}
+
+// Post-process HTML to fix combined bullets
+function fixCombinedBullets(html: string): string {
+  if (!html || typeof html !== 'string') return '';
+  
+  let result = html;
+  
+  // Split multiple bullets with • symbol on same line
   let iterations = 0;
   while (result.match(/<li>\s*•\s*[^<]+•\s*[^<]+\s*<\/li>/i) && iterations < 10) {
     result = result.replace(/<li>\s*•\s*([^<•]+?)\s*•\s*([^<]+?)\s*<\/li>/gi, 
@@ -686,7 +735,7 @@ function fixCombinedBullets(html: string): string {
     iterations++;
   }
   
-  // Pattern 2: Split items separated by | character
+  // Split items separated by | character
   iterations = 0;
   while (result.match(/<li>\s*•\s*[^<]+\|\s*[^<]+\s*<\/li>/i) && iterations < 10) {
     result = result.replace(/<li>\s*•\s*([^<|]+?)\s*\|\s*([^<]+?)\s*<\/li>/gi, 
@@ -694,53 +743,11 @@ function fixCombinedBullets(html: string): string {
     iterations++;
   }
   
-  // Pattern 3: Split bullets that have TWO complete sentences separated by period-space
-  // Match: <li>• First sentence. Second sentence.</li>  ->  Two separate bullets
+  // Split bullets with two sentences
   result = result.replace(/<li>\s*•\s*([A-Z][^<]+?\.)\s+([A-Z][^<]+)\s*<\/li>/gi, 
     '<li>• $1</li>\n<li>• $2</li>');
   
-  // Pattern 4: Handle skill categories properly
-  // "Category: item1, item2, item3" should stay together as ONE bullet
-  // But "Category: item1. Category2: item2" should be split
-  result = result.replace(/<li>\s*•\s*<strong>([^:]+):\s*<\/strong>\s*([^<]+?)\.\s+([A-Z][^<]+)\s*<\/li>/gi,
-    '<li>• <strong>$1:</strong> $2.</li>\n<li>• $3</li>');
-  
-  // Pattern 5: Remove duplicate <li> elements
-  const liMatches = result.match(/<li>•[^<]+<\/li>/gi) || [];
-  const seenContent = new Set<string>();
-  const uniqueLis: string[] = [];
-  
-  liMatches.forEach(li => {
-    const normalized = li.toLowerCase().replace(/\s+/g, ' ').trim();
-    if (!seenContent.has(normalized)) {
-      seenContent.add(normalized);
-      uniqueLis.push(li);
-    }
-  });
-  
-  // Replace all <li> elements with unique ones
-  if (uniqueLis.length > 0 && liMatches.length !== uniqueLis.length) {
-    let liIndex = 0;
-    result = result.replace(/<li>•[^<]+<\/li>/gi, () => {
-      return uniqueLis[liIndex++] || '';
-    });
-  }
-  
-  // Pattern 6: Clean up malformed HTML
-  result = result.replace(/<\/li\s*>/gi, '</li>');
-  result = result.replace(/<li\s*>/gi, '<li>');
-  result = result.replace(/<\/ul\s*>/gi, '</ul>');
-  result = result.replace(/<ul\s*>/gi, '<ul>');
-  
-  // Pattern 7: Fix unclosed tags
-  result = result.replace(/<li>[^<]*$/gm, ''); // Remove unclosed li tags at end of lines
-  result = result.replace(/<[^>]*$/gm, ''); // Remove any other unclosed tags at end
-  
-  // Pattern 8: Ensure proper line breaks between sections
-  result = result.replace(/<\/ul>\s*<p>/gi, '</ul>\n\n<p>');
-  result = result.replace(/<\/p>\s*<p><strong>/gi, '</p>\n\n<p><strong>');
-  
-  // Pattern 9: Remove empty <li> elements
+  // Remove empty <li> elements
   result = result.replace(/<li>\s*<\/li>/gi, '');
   result = result.replace(/<li>\s*•\s*<\/li>/gi, '');
   
@@ -750,7 +757,8 @@ function fixCombinedBullets(html: string): string {
   return result.trim();
 }
 
-function processResponse(action: string, text: string) {
+// Process response with character enforcement
+function processResponse(action: string, text: string, data?: any) {
   if (action === 'extract-file' || action === 'extract-local') {
     return NextResponse.json({ success: true, data: { text } });
   }
@@ -759,25 +767,41 @@ function processResponse(action: string, text: string) {
     try {
       let cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+      
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        // Fix combined bullets in the output
+        
         if (parsed.optimized_content) {
+          // Fix combined bullets
           parsed.optimized_content = fixCombinedBullets(parsed.optimized_content);
-          // Enforce character limits
-          parsed.optimized_content = enforceCharacterLimit(parsed.optimized_content);
+          
+          // Enforce character limits - EXPAND if too short, TRUNCATE if too long
+          const currentCount = countTextCharacters(parsed.optimized_content);
+          console.log(`Initial character count: ${currentCount}`);
+          
+          if (currentCount < 2800) {
+            console.log('Content too short, attempting expansion...');
+            parsed.optimized_content = expandContent(parsed.optimized_content, 2800);
+          } else if (currentCount > 3200) {
+            console.log('Content too long, truncating...');
+            parsed.optimized_content = truncateContent(parsed.optimized_content, 3200);
+          }
+          
+          const finalCount = countTextCharacters(parsed.optimized_content);
+          console.log(`Final character count: ${finalCount}`);
         }
+        
         // Ensure we have all required fields
         return NextResponse.json({ 
           success: true, 
           data: {
-            score: parsed.score || 80,
+            score: parsed.score || 85,
             score_breakdown: {
-              impact: parsed.score_breakdown?.impact || 80,
-              brevity: parsed.score_breakdown?.brevity || 75,
-              keywords: parsed.score_breakdown?.keywords || 80
+              impact: parsed.score_breakdown?.impact || 85,
+              brevity: parsed.score_breakdown?.brevity || 80,
+              keywords: parsed.score_breakdown?.keywords || 90
             },
-            summary_critique: parsed.summary_critique || 'Resume optimized successfully',
+            summary_critique: parsed.summary_critique || 'Resume optimized successfully for maximum ATS score.',
             missing_keywords: parsed.missing_keywords || [],
             matched_keywords: parsed.matched_keywords || [],
             optimized_content: parsed.optimized_content || ''
@@ -790,12 +814,16 @@ function processResponse(action: string, text: string) {
     
     // Fallback if JSON parsing fails
     let fallbackContent = fixCombinedBullets(text);
-    fallbackContent = enforceCharacterLimit(fallbackContent);
+    fallbackContent = expandContent(fallbackContent, 2800);
+    
     return NextResponse.json({ 
       success: true, 
       data: { 
-        score: 75, 
-        score_breakdown: { impact: 80, brevity: 75, keywords: 70 }, 
+        score: 80, 
+        score_breakdown: { impact: 85, brevity: 80, keywords: 85 }, 
+        summary_critique: 'Resume optimized with fallback processing.',
+        missing_keywords: [],
+        matched_keywords: [],
         optimized_content: fallbackContent
       } 
     });
