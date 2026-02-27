@@ -157,47 +157,71 @@ async function handleFetchJob(data: any, provider?: string, apiKey?: string, mod
   try {
     let jobContent = '';
     
-    // Try using z-ai's built-in web reader (no user API key needed)
+    // Method 1: Try direct fetch with CORS proxy
     try {
-      const zai = await getZAIClient();
-      console.log('ZAI client status:', zai ? 'initialized' : 'null');
+      console.log('🔄 Attempting direct fetch for URL:', url);
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+        redirect: 'follow'
+      });
       
-      if (zai) {
-        // Try web reader first
-        try {
-          console.log('Trying web_reader for URL:', url);
-          const readerResult = await zai.functions.invoke("web_reader", { url });
-          console.log('web_reader result:', readerResult ? 'got content' : 'empty');
-          if (readerResult && readerResult.content) {
-            jobContent = readerResult.content;
-          }
-        } catch (e: any) {
-          console.log('Web reader failed:', e.message);
-          // Web reader failed, try web search
-          try {
-            console.log('Trying web_search fallback');
-            const searchResult = await zai.functions.invoke("web_search", {
-              query: `job listing ${url}`,
-              num: 5
-            });
-            console.log('web_search result:', searchResult ? 'got results' : 'empty');
-            if (searchResult && Array.isArray(searchResult) && searchResult.length > 0) {
-              jobContent = searchResult.map((r: any) => 
-                `Title: ${r.name || 'N/A'}\nURL: ${r.url || 'N/A'}\nSnippet: ${r.snippet || 'N/A'}`
-              ).join('\n\n');
-            }
-          } catch (e2: any) {
-            console.log('Web search also failed:', e2.message);
-          }
-        }
-      } else {
-        console.log('ZAI client not available - environment variables may not be set');
+      if (response.ok) {
+        const html = await response.text();
+        // Extract text from HTML (simple approach)
+        jobContent = html
+          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+          .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        console.log('✅ Direct fetch succeeded, content length:', jobContent.length);
       }
     } catch (e: any) {
-      console.log('Failed to initialize ZAI client:', e.message);
+      console.log('⚠️ Direct fetch failed:', e.message);
     }
     
-    // If we got content, return it (no AI analysis needed)
+    // Method 2: Try ZAI web reader if direct fetch failed or content is too short
+    if (!jobContent || jobContent.length < 200) {
+      try {
+        const zai = await getZAIClient();
+        console.log('ZAI client status:', zai ? 'initialized' : 'null');
+        
+        if (zai) {
+          try {
+            console.log('Trying web_reader for URL:', url);
+            const readerResult = await zai.functions.invoke("web_reader", { url });
+            console.log('web_reader result:', readerResult ? 'got content' : 'empty');
+            if (readerResult && readerResult.content) {
+              jobContent = readerResult.content;
+            }
+          } catch (e: any) {
+            console.log('Web reader failed:', e.message);
+            // Try web search as fallback
+            try {
+              console.log('Trying web_search fallback');
+              const searchResult = await zai.functions.invoke("web_search", {
+                query: `job listing ${url}`,
+                num: 5
+              });
+              if (searchResult && Array.isArray(searchResult) && searchResult.length > 0) {
+                jobContent = searchResult.map((r: any) => 
+                  `Title: ${r.name || 'N/A'}\nURL: ${r.url || 'N/A'}\nSnippet: ${r.snippet || 'N/A'}`
+                ).join('\n\n');
+              }
+            } catch (e2: any) {
+              console.log('Web search also failed:', e2.message);
+            }
+          }
+        }
+      } catch (e: any) {
+        console.log('Failed to use ZAI client:', e.message);
+      }
+    }
+    
+    // If we got content, return it
     if (jobContent && jobContent.length > 100) {
       // If user has API key, enhance with AI analysis
       if (provider && apiKey) {
@@ -214,7 +238,6 @@ async function handleFetchJob(data: any, provider?: string, apiKey?: string, mod
             case 'groq':
               return await handleGroq('fetch-job', { jobContent, prompt }, apiKey, model);
             default:
-              // Just return the raw content
               break;
           }
         } catch (aiError) {
@@ -229,10 +252,10 @@ async function handleFetchJob(data: any, provider?: string, apiKey?: string, mod
       });
     }
     
-    // No content fetched - return helpful error message
+    // No content fetched
     return NextResponse.json({ 
       success: false, 
-      error: 'Could not fetch job details. Please paste the job description manually, or configure an API key in Settings for enhanced URL fetching.' 
+      error: 'Could not fetch job details from this URL. Please paste the job description manually.' 
     }, { status: 400 });
     
   } catch (error: any) {
