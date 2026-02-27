@@ -5,16 +5,15 @@ import {
   unregisterActiveBatch,
   updateResumeResult,
   incrementBatchProgress,
-  canStartNewBatch
+  canStartNewBatch,
+  enforceCharacterConstraint,
+  CHAR_TARGET_MIN,
+  CHAR_TARGET_MAX,
+  CHAR_TARGET_OPTIMAL
 } from '@/lib/batch-processor';
 import ZAI from 'z-ai-web-dev-sdk';
 
-// Character target for optimization
-const CHAR_TARGET_MIN = 2750;
-const CHAR_TARGET_MAX = 2850;
-const CHAR_TARGET_OPTIMAL = 2800;
-
-// Build optimization prompt
+// Build optimization prompt with next steps
 function buildOptimizePrompt(resumeText: string, jobText: string, language: string = 'en'): string {
   const langInstructions = language === 'fr'
     ? 'Générez le CV optimisé en français.'
@@ -68,8 +67,44 @@ Return ONLY valid JSON:
   "summary_critique": "Brief feedback",
   "missing_keywords": ["keyword1"],
   "matched_keywords": ["keyword2"],
+  "next_step_suggestions": "3-5 actionable recommendations for further improvement",
   "optimized_content": "HTML CONTENT HERE - MUST BE ${CHAR_TARGET_MIN}-${CHAR_TARGET_MAX} TEXT CHARACTERS"
 }`;
+}
+
+// Generate next step suggestions based on the optimization result
+function generateNextSteps(parsed: any, charValidation: { valid: boolean; charCount: number; message: string }): string {
+  const suggestions: string[] = [];
+
+  // Character count feedback
+  if (!charValidation.valid) {
+    suggestions.push(`Adjust resume length: ${charValidation.message}`);
+  }
+
+  // Missing keywords
+  if (parsed.missing_keywords && parsed.missing_keywords.length > 0) {
+    suggestions.push(`Consider incorporating these keywords: ${parsed.missing_keywords.slice(0, 5).join(', ')}`);
+  }
+
+  // Score-based suggestions
+  if (parsed.score_breakdown) {
+    if (parsed.score_breakdown.impact < 80) {
+      suggestions.push('Add more quantifiable achievements (numbers, percentages, metrics)');
+    }
+    if (parsed.score_breakdown.brevity < 80) {
+      suggestions.push('Tighten bullet points - aim for 80-100 characters each');
+    }
+    if (parsed.score_breakdown.keywords < 80) {
+      suggestions.push('Incorporate more industry-specific keywords from the job description');
+    }
+  }
+
+  // General suggestions
+  if (suggestions.length === 0) {
+    suggestions.push('Resume is well-optimized for ATS. Consider tailoring for specific job applications.');
+  }
+
+  return suggestions.join(' | ');
 }
 
 // Process a single resume
@@ -90,6 +125,7 @@ async function processResume(
     });
 
     let optimizedContent = '';
+    let nextStepSuggestions = '';
     let scoreBefore = 0;
     let scoreAfter = 0;
     let tokenUsage = 0;
@@ -104,11 +140,11 @@ async function processResume(
     // Build prompt
     const prompt = buildOptimizePrompt(resumeText, jobText, language);
 
-    // Call AI
+    // Call AI using z-ai-web-dev-sdk
     const zai = await ZAI.create();
     const completion = await zai.chat.completions.create({
       messages: [
-        { role: 'system', content: 'You are a resume optimization expert. Return only valid JSON.' },
+        { role: 'system', content: 'You are a resume optimization expert. Return only valid JSON with optimized_content, score, score_breakdown, summary_critique, missing_keywords, matched_keywords, and next_step_suggestions fields.' },
         { role: 'user', content: prompt }
       ]
     });
@@ -124,36 +160,52 @@ async function processResume(
         optimizedContent = parsed.optimized_content || '';
         scoreAfter = parsed.score || 85;
 
-        // Validate character count
-        const textOnly = optimizedContent.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-        const charCount = textOnly.length;
+        // SERVER-SIDE CHARACTER CONSTRAINT ENFORCEMENT
+        const charValidation = enforceCharacterConstraint(optimizedContent);
 
-        if (charCount < CHAR_TARGET_MIN || charCount > CHAR_TARGET_MAX) {
-          console.log(`Character count ${charCount} outside target range, but accepting result`);
+        if (!charValidation.valid) {
+          console.log(`Character constraint violation: ${charValidation.message}`);
+          // We still save but log the violation
+        }
+
+        // Generate next step suggestions
+        nextStepSuggestions = generateNextSteps(parsed, charValidation);
+        if (parsed.next_step_suggestions) {
+          nextStepSuggestions = `${parsed.next_step_suggestions} | ${nextStepSuggestions}`;
         }
       } else {
         // Use response as-is if not JSON
         optimizedContent = responseText;
         scoreAfter = 85;
+        nextStepSuggestions = 'Resume processed. Review content for ATS optimization opportunities.';
       }
     } catch (parseError) {
       console.error('Parse error:', parseError);
       // Use raw response
       optimizedContent = responseText;
       scoreAfter = 85;
+      nextStepSuggestions = 'Resume processed. Manual review recommended.';
     }
 
-    // Estimate token usage
+    // Final character validation
+    const finalValidation = enforceCharacterConstraint(optimizedContent);
+
+    // Estimate token usage (rough approximation)
     tokenUsage = Math.ceil((resumeText.length + optimizedContent.length) / 4);
 
-    // Save result
+    // Calculate cost estimate (based on provider)
+    const costPerToken = 0.00001; // $0.01 per 1000 tokens average
+    const costEstimate = tokenUsage * costPerToken;
+
+    // Save result with all fields
     await updateResumeResult(resumeId, {
       optimizedContent,
+      nextStepSuggestions,
       atsScoreBefore: scoreBefore,
       atsScoreAfter: scoreAfter,
       providerUsed: provider || 'zai',
       tokenUsage,
-      costEstimate: tokenUsage * 0.00001, // Rough estimate
+      costEstimate,
       status: 'completed'
     });
 

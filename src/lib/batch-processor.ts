@@ -46,9 +46,14 @@ export interface BatchProgress {
 export interface ResumeStatus {
   id: string;
   fileName: string;
+  language?: string;
   status: string;
   atsScoreBefore?: number;
   atsScoreAfter?: number;
+  nextStepSuggestions?: string;
+  providerUsed?: string;
+  tokenUsage?: number;
+  costEstimate?: number;
   errorMessage?: string;
 }
 
@@ -302,6 +307,7 @@ export async function createBatch(
       data: {
         batchId: batch.id,
         fileName: file.name,
+        language,
         originalContent: parsed.content || '',
         status: parsed.error ? 'failed' : 'pending',
         errorMessage: parsed.error || null
@@ -328,9 +334,14 @@ export async function getBatchProgress(batchId: string): Promise<BatchProgress |
         select: {
           id: true,
           fileName: true,
+          language: true,
           status: true,
           atsScoreBefore: true,
           atsScoreAfter: true,
+          nextStepSuggestions: true,
+          providerUsed: true,
+          tokenUsage: true,
+          costEstimate: true,
           errorMessage: true
         }
       }
@@ -355,9 +366,14 @@ export async function getBatchProgress(batchId: string): Promise<BatchProgress |
     resumes: batch.resumes.map(r => ({
       id: r.id,
       fileName: r.fileName,
+      language: r.language ?? undefined,
       status: r.status,
       atsScoreBefore: r.atsScoreBefore ?? undefined,
       atsScoreAfter: r.atsScoreAfter ?? undefined,
+      nextStepSuggestions: r.nextStepSuggestions ?? undefined,
+      providerUsed: r.providerUsed ?? undefined,
+      tokenUsage: r.tokenUsage ?? undefined,
+      costEstimate: r.costEstimate ?? undefined,
       errorMessage: r.errorMessage ?? undefined
     }))
   };
@@ -367,6 +383,7 @@ export async function updateResumeResult(
   resumeId: string,
   result: {
     optimizedContent?: string;
+    nextStepSuggestions?: string;
     atsScoreBefore?: number;
     atsScoreAfter?: number;
     providerUsed?: string;
@@ -571,4 +588,215 @@ export function getDocxHtml(content: string): string {
       <body>${content}</body>
     </html>
   `;
+}
+
+// =============================================================================
+// SEARCH FUNCTIONALITY
+// =============================================================================
+
+export async function searchResumes(params: {
+  query?: string;
+  language?: string;
+  batchId?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{
+  resumes: Array<{
+    id: string;
+    fileName: string;
+    language: string;
+    status: string;
+    atsScoreBefore: number | null;
+    atsScoreAfter: number | null;
+    batchId: string | null;
+    createdAt: Date;
+  }>;
+  total: number;
+}> {
+  const { query, language, batchId, status, limit = 20, offset = 0 } = params;
+
+  const where: any = {};
+
+  if (query) {
+    where.fileName = { contains: query, mode: 'insensitive' };
+  }
+
+  if (language) {
+    where.language = language;
+  }
+
+  if (batchId) {
+    const batch = await db.batch.findUnique({ where: { batchId } });
+    if (batch) {
+      where.batchId = batch.id;
+    }
+  }
+
+  if (status) {
+    where.status = status;
+  }
+
+  const [resumes, total] = await Promise.all([
+    db.resume.findMany({
+      where,
+      select: {
+        id: true,
+        fileName: true,
+        language: true,
+        status: true,
+        atsScoreBefore: true,
+        atsScoreAfter: true,
+        batchId: true,
+        createdAt: true
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip: offset
+    }),
+    db.resume.count({ where })
+  ]);
+
+  return { resumes, total };
+}
+
+// =============================================================================
+// RETRY FAILED FILES
+// =============================================================================
+
+export async function getFailedResumes(batchId: string): Promise<Array<{
+  id: string;
+  fileName: string;
+  originalContent: string;
+  errorMessage: string | null;
+}>> {
+  const batch = await db.batch.findUnique({ where: { batchId } });
+  if (!batch) return [];
+
+  const failedResumes = await db.resume.findMany({
+    where: {
+      batchId: batch.id,
+      status: 'failed'
+    },
+    select: {
+      id: true,
+      fileName: true,
+      originalContent: true,
+      errorMessage: true
+    }
+  });
+
+  return failedResumes;
+}
+
+export async function resetResumeForRetry(resumeId: string): Promise<boolean> {
+  try {
+    await db.resume.update({
+      where: { id: resumeId },
+      data: {
+        status: 'pending',
+        errorMessage: null
+      }
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// =============================================================================
+// COST TRACKING
+// =============================================================================
+
+export async function getUsageStats(): Promise<{
+  totalResumes: number;
+  completedResumes: number;
+  failedResumes: number;
+  totalTokens: number;
+  totalCost: number;
+  providerStats: Record<string, { count: number; tokens: number; cost: number }>;
+}> {
+  const resumes = await db.resume.findMany({
+    select: {
+      status: true,
+      providerUsed: true,
+      tokenUsage: true,
+      costEstimate: true
+    }
+  });
+
+  const stats = {
+    totalResumes: resumes.length,
+    completedResumes: resumes.filter(r => r.status === 'completed').length,
+    failedResumes: resumes.filter(r => r.status === 'failed').length,
+    totalTokens: 0,
+    totalCost: 0,
+    providerStats: {} as Record<string, { count: number; tokens: number; cost: number }>
+  };
+
+  for (const resume of resumes) {
+    if (resume.tokenUsage) {
+      stats.totalTokens += resume.tokenUsage;
+    }
+    if (resume.costEstimate) {
+      stats.totalCost += resume.costEstimate;
+    }
+    if (resume.providerUsed) {
+      if (!stats.providerStats[resume.providerUsed]) {
+        stats.providerStats[resume.providerUsed] = { count: 0, tokens: 0, cost: 0 };
+      }
+      stats.providerStats[resume.providerUsed].count++;
+      if (resume.tokenUsage) {
+        stats.providerStats[resume.providerUsed].tokens += resume.tokenUsage;
+      }
+      if (resume.costEstimate) {
+        stats.providerStats[resume.providerUsed].cost += resume.costEstimate;
+      }
+    }
+  }
+
+  return stats;
+}
+
+// =============================================================================
+// CHARACTER CONSTRAINT ENFORCEMENT
+// =============================================================================
+
+export const CHAR_TARGET_MIN = 2750;
+export const CHAR_TARGET_MAX = 2850;
+export const CHAR_TARGET_OPTIMAL = 2800;
+
+export function countTextCharacters(html: string): number {
+  const textOnly = html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  return textOnly.length;
+}
+
+export function enforceCharacterConstraint(content: string): {
+  valid: boolean;
+  charCount: number;
+  message: string;
+} {
+  const charCount = countTextCharacters(content);
+
+  if (charCount < CHAR_TARGET_MIN) {
+    return {
+      valid: false,
+      charCount,
+      message: `Content too short: ${charCount} characters. Minimum: ${CHAR_TARGET_MIN}`
+    };
+  }
+
+  if (charCount > CHAR_TARGET_MAX) {
+    return {
+      valid: false,
+      charCount,
+      message: `Content too long: ${charCount} characters. Maximum: ${CHAR_TARGET_MAX}`
+    };
+  }
+
+  return {
+    valid: true,
+    charCount,
+    message: `Content within target: ${charCount} characters (target: ${CHAR_TARGET_OPTIMAL})`
+  };
 }

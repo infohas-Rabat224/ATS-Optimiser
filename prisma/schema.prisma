@@ -49,22 +49,26 @@ model Batch {
 }
 
 model Resume {
-  id               String   @id @default(cuid())
-  batchId          String?
-  fileName         String
-  originalContent  String
-  optimizedContent String?
-  atsScoreBefore   Int?
-  atsScoreAfter    Int?
-  providerUsed     String?
-  tokenUsage       Int?
-  costEstimate     Float?
-  status           String   @default("pending") // pending, processing, completed, failed
-  errorMessage     String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  batch            Batch?   @relation(fields: [batchId], references: [id])
+  id                  String   @id @default(cuid())
+  batchId             String?
+  fileName            String
+  language            String   @default("en")
+  originalContent     String
+  optimizedContent    String?
+  nextStepSuggestions String?  // AI-generated next steps for improvement
+  atsScoreBefore      Int?
+  atsScoreAfter       Int?
+  providerUsed        String?
+  tokenUsage          Int?
+  costEstimate        Float?
+  status              String   @default("pending") // pending, processing, completed, failed
+  errorMessage        String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  batch               Batch?   @relation(fields: [batchId], references: [id])
 
   @@index([batchId])
   @@index([status])
+  @@index([language])
+  @@index([fileName])
 }
