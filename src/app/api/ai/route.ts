@@ -1,17 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import ZAI from 'z-ai-web-dev-sdk';
 
-console.log('🔄 API route loaded - v7 (with web search and more providers)');
+console.log('🔄 API route loaded - v8 (enhanced web fetching with debug logging)');
 
 // Configuration from environment variables
 function getAIConfig() {
   const baseUrl = process.env.ZAI_BASE_URL || process.env.NEXT_PUBLIC_ZAI_BASE_URL;
   const apiKey = process.env.ZAI_API_KEY || process.env.NEXT_PUBLIC_ZAI_API_KEY;
   
+  console.log('🔍 ZAI Config check:', {
+    hasBaseUrl: !!baseUrl,
+    hasApiKey: !!apiKey,
+    baseUrlPrefix: baseUrl ? baseUrl.substring(0, 30) + '...' : 'none'
+  });
+  
   if (!baseUrl || !apiKey) {
+    console.log('⚠️ ZAI config missing - baseUrl or apiKey not set');
     return null;
   }
   
+  console.log('✅ ZAI config found, creating client');
   return { baseUrl, apiKey };
 }
 
@@ -23,14 +31,24 @@ async function getZAIClient() {
   const config = getAIConfig();
   if (config) {
     if (!zaiClient) {
-      zaiClient = new ZAI(config);
+      try {
+        zaiClient = new ZAI(config);
+        console.log('✅ ZAI client created from env config');
+      } catch (e: any) {
+        console.error('❌ Failed to create ZAI client from config:', e.message);
+      }
     }
     return zaiClient;
   }
   
-  // Fall back to config file (for local development)
+  // Fall back to auto-initialization (for local development with config file)
   if (!zaiClient) {
-    zaiClient = await ZAI.create();
+    try {
+      zaiClient = await ZAI.create();
+      console.log('✅ ZAI client created from auto-init');
+    } catch (e: any) {
+      console.error('❌ Failed to auto-init ZAI client:', e.message);
+    }
   }
   return zaiClient;
 }
