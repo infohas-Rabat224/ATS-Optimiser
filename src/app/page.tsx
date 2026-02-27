@@ -2,11 +2,20 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, RefreshCw, ChevronRight, BarChart2, Download, Copy, Briefcase, FileUp, FileDown, Loader2, Search, Mail, MessageSquare, Printer, Edit3, Save, Send, History, Settings, X, Trash2, Eye, EyeOff, Plane, ShieldCheck, Users, Layout, Activity, FileStack, Cloud, Check, Lock, Globe } from 'lucide-react';
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// --- CLIENT-SIDE LOGIC ---
-const API_KEY = ""; // Injected by environment
-const genAI = new GoogleGenerativeAI(API_KEY);
+// --- BACKEND API HELPER ---
+const callBackendAI = async (action: string, data: any) => {
+  const response = await fetch('/api/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, data })
+  });
+  const result = await response.json();
+  if (!result.success) {
+    throw new Error(result.error || 'AI request failed');
+  }
+  return result.data;
+};
 
 // --- HELPER: DOCX HTML WRAPPER (STRICT ONE-PAGE A4 LAYOUT) ---
 const getDocxHtml = (content) => {
@@ -115,84 +124,20 @@ const getDocxHtml = (content) => {
   `;
 };
 
-// --- AI FUNCTIONS ---
+// --- AI FUNCTIONS (Using Backend API) ---
 
-const analyzeWithGemini = async (resumeText, jobDescription, settings, airlineProfile) => {
+const analyzeWithGemini = async (resumeText: string, jobDescription: string, settings: any, airlineProfile: string) => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025" });
+    const data = await callBackendAI('optimize-resume', {
+      resume: resumeText,
+      job: jobDescription,
+      settings,
+      airlineProfile
+    });
     
-    const toneInstruction = settings?.tone || "Corporate Professional";
-    const strictnessInstruction = settings?.strictness === "Aggressive" 
-      ? "MAXIMUM keyword stuffing."
-      : "Balanced optimization.";
-    
-    const atsSystem = airlineProfile ? (AIRLINE_ATS_PROFILES[airlineProfile]?.system || "Generic ATS") : "Generic ATS";
-    const atsFocus = airlineProfile ? (AIRLINE_ATS_PROFILES[airlineProfile]?.focus || "General") : "General";
-
-    const prompt = `
-      ACT AS: Senior ATS Optimization Expert and Master Executive Resume Writer.
-      
-      OBJECTIVE: Optimise for maximum ATS score. Rewrite the resume to FILL EXACTLY ONE A4 PAGE (12pt font). You must strategically weave in exact keywords, hard skills, and industry terminology to guarantee a 90%+ match rate.
-      
-      CONTEXT:
-      - ATS SYSTEM: ${atsSystem} (${atsFocus})
-      - INDUSTRY KEYWORDS: ${AVIATION_KEYWORDS}
-      - TONE: ${toneInstruction}
-      - STRATEGY: ${strictnessInstruction}
-      
-      INPUT DATA:
-      [RESUME]: ${resumeText}
-      [JOB DESCRIPTION]: ${jobDescription}
-      
-      TASK 1: SCORING (Calculate ATS Score, Impact, Brevity, Keywords).
-      TASK 2: REWRITE (STRICT PLAIN TEXT).
-      
-      CRITICAL LENGTH ENFORCEMENT (NON-NEGOTIABLE & STRICT):
-      The generated resume MUST contain EXACTLY 2,800 characters (excluding HTML tags). Not less, not more.
-      - 2,100 characters is too short and sparse. DO NOT OUTPUT SHORT TEXT.
-      - 3,000+ characters will cause page overflow. DO NOT EXCEED.
-      - **HOW TO HIT EXACTLY 2800 CHARACTERS INTELLIGENTLY**: 
-        1. If the draft is short: Expand content intelligently without filler or redundancy. Add deep technical context. Improve impact-driven bullet points. Ensure measurable achievements are prioritized (e.g., increased efficiency by X%, managed $Y budget). Use 5-7 detailed bullet points for the 2 most recent roles.
-        2. If the draft is too long: Summarize older roles (older than 5 years) to a single line without bullet points. Keep the summary to exactly 3 lines.
-      
-      FORMATTING RULES (NON-NEGOTIABLE):
-      1. **NO** Emojis, Icons, Graphics, Colors, Tables, Columns, or Decorative Symbols.
-      2. **NO** Underlines or horizontal rules (<hr>).
-      3. **FONT**: Times New Roman, Size 12.
-      
-      STRUCTURE:
-      1. **HEADER**: Name (H1, Uppercase, Bold, LEFT ALIGNED), Contact Info (LEFT ALIGNED).
-      2. **SECTIONS** (H3 tags): PROFESSIONAL SUMMARY, EXPERIENCE, EDUCATION, SKILLS. (Uppercase, Bold, LEFT ALIGNED, No lines).
-      3. **EXPERIENCE ENTRIES**:
-         - Job Title, Company, Location, Date MUST be on ONE LINE.
-         - Format: <h4><strong>Job Title</strong> | <strong>Company Name</strong>, Location | <strong>YYYY to YYYY</strong></h4>
-         - Do NOT use "(1 Year)". Use "Present" if applicable.
-      4. **EDUCATION ENTRIES**:
-         - Format: <h4><strong>Degree</strong> | <strong>School</strong> | <strong>YYYY to YYYY</strong></h4>
-         - List relevant modules/subjects learned as a simple bullet list.
-      5. **CONTENT**: Use <strong> tags for bolding. NO markdown asterisks (**).
-      
-      RETURN JSON FORMAT ONLY:
-      {
-        "score": number,
-        "score_breakdown": { "impact": number, "brevity": number, "keywords": number },
-        "summary_critique": "string",
-        "missing_keywords": ["string", "string"],
-        "matched_keywords": ["string", "string"],
-        "optimized_content": "Valid HTML string..."
-      }
-    `;
-
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    let text = response.text();
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    const data = JSON.parse(text);
-    if (data.optimized_content) {
-      data.optimized_content = data.optimized_content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    }
+    // Ensure score_breakdown exists
     if (!data.score_breakdown) {
-       data.score_breakdown = { impact: 85, brevity: 90, keywords: data.score };
+      data.score_breakdown = { impact: 85, brevity: 90, keywords: data.score };
     }
     return data;
   } catch (error) {
@@ -221,48 +166,42 @@ const AVIATION_KEYWORDS = `
   Soft Skills: Decision Making Under Pressure, Multi-Crew Coordination, Situational Awareness.
 `;
 
-const runATSSimulation = async (resumeHtml) => {
+const runATSSimulation = async (resumeHtml: string) => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025" });
-    const prompt = `ACT AS: ATS Parsing Simulator. INPUT: ${resumeHtml}. ANALYZE: Parsing Errors, Density, Readability. RETURN JSON: { "parsing_confidence": number, "issues": [{"type": "string", "severity": "string", "message": "string"}], "extracted_entities": {"skills_detected": number}, "density_analysis": "string" }`;
-    const result = await model.generateContent(prompt);
-    const text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(text);
+    return await callBackendAI('ats-simulation', { resumeHtml });
   } catch (error) { throw new Error("Simulation failed."); }
 };
 
-const generateCoverLetterWithGemini = async (optimizedResumeHtml, jobDescription, settings) => {
+const generateCoverLetterWithGemini = async (optimizedResumeHtml: string, jobDescription: string, settings: any) => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025" });
-    const tone = settings?.tone || "Professional";
-    const prompt = `ACT AS: Expert Career Coach. OBJECTIVE: Write a targeted Cover Letter. TONE: ${tone}. INPUT: [RESUME HTML]: ${optimizedResumeHtml}, [JOB]: ${jobDescription}. STRICT RULES: Times New Roman, 12pt. A4. Header matches resume (Left Aligned). No Markdown. Return JSON { "cover_letter_content": "html..." }`;
-    const result = await model.generateContent(prompt);
-    const text = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-    const data = JSON.parse(text);
-    if (data.cover_letter_content) data.cover_letter_content = data.cover_letter_content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    const data = await callBackendAI('generate-cover-letter', {
+      resume: optimizedResumeHtml,
+      job: jobDescription,
+      settings
+    });
     return data;
   } catch (error) { throw new Error("Cover Letter generation failed."); }
 };
 
-const generateColdEmailWithGemini = async (resumeHtml, jobDescription) => {
+const generateColdEmailWithGemini = async (resumeHtml: string, jobDescription: string) => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025" });
-    const prompt = `ACT AS: Career Strategist. OBJECTIVE: Write a "Cold Email" to Hiring Manager. INPUT: [RESUME]: ${resumeHtml}, [JOB]: ${jobDescription}. OUTPUT JSON: { "subject_line": "string", "email_body": "string" }`;
-    const result = await model.generateContent(prompt);
-    return JSON.parse(result.response.text().replace(/```json/g, '').replace(/```/g, '').trim());
+    return await callBackendAI('generate-email', {
+      resume: resumeHtml,
+      job: jobDescription
+    });
   } catch (error) { throw new Error("Email generation failed."); }
 };
 
-const generateInterviewPrepWithGemini = async (resumeHtml, jobDescription) => {
+const generateInterviewPrepWithGemini = async (resumeHtml: string, jobDescription: string) => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025" });
-    const prompt = `ACT AS: Lead Interviewer. OBJECTIVE: Generate 5 likely interview questions and STAR answers. INPUT: [RESUME]: ${resumeHtml}, [JOB]: ${jobDescription}. OUTPUT JSON: { "questions": [{ "question": "string", "star_answer": "string" }] }`;
-    const result = await model.generateContent(prompt);
-    return JSON.parse(result.response.text().replace(/```json/g, '').replace(/```/g, '').trim());
+    return await callBackendAI('generate-interview', {
+      resume: resumeHtml,
+      job: jobDescription
+    });
   } catch (error) { throw new Error("Interview Prep generation failed."); }
 };
 
-const parseFile = async (file) => {
+const parseFile = async (file: File): Promise<string> => {
   if (file.name.endsWith('.docx') || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
     if (window.mammoth) {
       const arrayBuffer = await file.arrayBuffer();
@@ -270,30 +209,33 @@ const parseFile = async (file) => {
       return result.value;
     } else { throw new Error("DOCX parser not loaded yet."); }
   } else if (file.name.endsWith('.pdf') || file.type === 'application/pdf') {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025" });
-    const base64Data = await new Promise((resolve, reject) => {
+    // Use backend API for PDF extraction
+    const base64Data = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onload = () => resolve((reader.result as string).split(',')[1]);
       reader.onerror = reject;
     });
-    const result = await model.generateContent([{ inlineData: { mimeType: 'application/pdf', data: base64Data } }, { text: "Extract all text verbatim." }]);
-    return result.response.text();
+    
+    const data = await callBackendAI('extract-file', {
+      base64: base64Data,
+      mimeType: 'application/pdf'
+    });
+    return data.text;
   } else {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
+      reader.onload = (e) => resolve(e.target?.result as string);
       reader.onerror = reject;
       reader.readAsText(file);
     });
   }
 };
 
-const fetchJobWithGemini = async (url) => {
+const fetchJobWithGemini = async (url: string) => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025", tools: [{ googleSearch: {} }] });
-    const result = await model.generateContent(`You are a job analyst. TARGET URL: ${url}. ACTION: Analyze job listing. TASK: Summarize Title, Company, Responsibilities, Hard Skills, Soft Skills. OUTPUT: Comprehensive summary.`);
-    return result.response.text();
+    const data = await callBackendAI('fetch-job', { url });
+    return data.text || data;
   } catch (error) { throw new Error("Could not automatically fetch job details."); }
 };
 

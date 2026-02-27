@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import ZAI from 'z-ai-web-dev-sdk';
 
-console.log('🔄 API route loaded - v4 (exact character enforcement)');
+console.log('🔄 API route loaded - v5 (using z-ai-web-dev-sdk)');
+
+// Initialize ZAI client
+let zaiClient: Awaited<ReturnType<typeof ZAI.create>> | null = null;
+
+async function getZAIClient() {
+  if (!zaiClient) {
+    zaiClient = await ZAI.create();
+  }
+  return zaiClient;
+}
 
 // Multi-provider AI endpoint
 export async function POST(request: NextRequest) {
@@ -13,40 +24,33 @@ export async function POST(request: NextRequest) {
       return await handleLocalExtraction(data);
     }
     
-    // If provider is specified but no API key, return error
-    if (provider && !apiKey) {
-      return NextResponse.json({ 
-        success: false, 
-        error: `No API key provided for ${provider}. Please add your ${provider} API key in Settings.` 
-      }, { status: 400 });
-    }
-    
-    // If no provider specified, use server-side Gemini (default)
-    if (!provider) {
-      return await handleDefaultGemini(action, data);
+    // If provider is specified with API key, use that provider
+    if (provider && apiKey) {
+      switch (provider) {
+        case 'gemini':
+          return await handleGemini(action, data, apiKey, model);
+        case 'deepseek':
+          return await handleDeepSeek(action, data, apiKey, model);
+        case 'openai':
+          return await handleOpenAI(action, data, apiKey, model);
+        case 'groq':
+          return await handleGroq(action, data, apiKey, model);
+        case 'anthropic':
+          return await handleAnthropic(action, data, apiKey, model);
+        case 'openrouter':
+          return await handleOpenRouter(action, data, apiKey, model);
+        case 'perplexity':
+          return await handlePerplexity(action, data, apiKey, model);
+        default:
+          return NextResponse.json({ 
+            success: false, 
+            error: `Provider '${provider}' not yet implemented.` 
+          }, { status: 400 });
+      }
     }
 
-    switch (provider) {
-      case 'gemini':
-        return await handleGemini(action, data, apiKey, model);
-      case 'deepseek':
-        return await handleDeepSeek(action, data, apiKey, model);
-      case 'openai':
-        return await handleOpenAI(action, data, apiKey, model);
-      case 'groq':
-        return await handleGroq(action, data, apiKey, model);
-      case 'anthropic':
-        return await handleAnthropic(action, data, apiKey, model);
-      case 'openrouter':
-        return await handleOpenRouter(action, data, apiKey, model);
-      case 'perplexity':
-        return await handlePerplexity(action, data, apiKey, model);
-      default:
-        return NextResponse.json({ 
-          success: false, 
-          error: `Provider '${provider}' not yet implemented.` 
-        }, { status: 400 });
-    }
+    // Default: Use z-ai-web-dev-sdk (no API key required)
+    return await handleDefaultAI(action, data);
   } catch (error: any) {
     console.error('AI API Error:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
@@ -61,18 +65,39 @@ async function handleLocalExtraction(data: any) {
   }, { status: 400 });
 }
 
-// Default server-side Gemini (uses Vercel env var GEMINI_API_KEY)
-async function handleDefaultGemini(action: string, data: any) {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-  
-  if (!apiKey) {
+// Default AI handler using z-ai-web-dev-sdk (no API key required)
+async function handleDefaultAI(action: string, data: any) {
+  try {
+    const zai = await getZAIClient();
+    
+    // Build the prompt based on action
+    let prompt: string;
+    if (action === 'optimize-resume') {
+      prompt = buildOptimizePrompt(data);
+    } else if (action === 'extract-file' && data.base64 && data.mimeType) {
+      // For file extraction, we handle it differently
+      prompt = 'Extract ALL text from this document. Return ONLY the extracted text content, preserving structure and formatting.';
+    } else {
+      prompt = getPromptForAction(action, data);
+    }
+    
+    // Call the AI
+    const completion = await zai.chat.completions.create({
+      messages: [
+        { role: 'system', content: 'You are a helpful assistant specialized in resume optimization and career services.' },
+        { role: 'user', content: prompt }
+      ]
+    });
+    
+    const text = completion.choices?.[0]?.message?.content || '';
+    return processResponse(action, text, data);
+  } catch (error: any) {
+    console.error('ZAI API Error:', error);
     return NextResponse.json({ 
       success: false, 
-      error: 'No API key configured. Please add your API key in Settings or configure GEMINI_API_KEY on the server.' 
-    }, { status: 400 });
+      error: `AI request failed: ${error.message}` 
+    }, { status: 500 });
   }
-  
-  return handleGemini(action, data, apiKey, 'gemini-2.0-flash');
 }
 
 // Gemini handler
@@ -612,7 +637,11 @@ Write the complete cover letter in the exact format shown above. Output ONLY the
 
     'linkedin-optimize': `Create LinkedIn optimization.\n\nRESUME: ${data.resume?.replace(/<[^>]*>/g, ' ') || ''}\nJOB: ${data.job || ''}\n\nGenerate: Headline (120 chars), About section, Skills (10-15), Achievement highlights.`,
 
-    'skills-gap': `Analyze skills gap.\n\nRESUME: ${data.resume?.replace(/<[^>]*>/g, ' ') || ''}\nJOB: ${data.job || ''}\n\nReturn JSON array: [{"skill": "...", "hasSkill": true/false, "importance": "high/medium/low", "suggestion": "..."}]`
+    'skills-gap': `Analyze skills gap.\n\nRESUME: ${data.resume?.replace(/<[^>]*>/g, ' ') || ''}\nJOB: ${data.job || ''}\n\nReturn JSON array: [{"skill": "...", "hasSkill": true/false, "importance": "high/medium/low", "suggestion": "..."}]`,
+
+    'ats-simulation': `You are an ATS (Applicant Tracking System) Parsing Simulator. Analyze the following resume HTML for ATS compatibility.\n\nRESUME HTML: ${data.resumeHtml || ''}\n\nAnalyze for:\n1. Parsing confidence (0-100%)\n2. Issues detected (formatting, encoding, structure problems)\n3. Skills extracted count\n4. Keyword density analysis\n\nReturn JSON: { "parsing_confidence": number, "issues": [{"type": "string", "severity": "string", "message": "string"}], "extracted_entities": {"skills_detected": number}, "density_analysis": "string" }`,
+
+    'fetch-job': `You are a job listing analyst. Analyze the job listing at this URL or from the provided information.\n\nURL: ${data.url || ''}\n\nExtract and summarize:\n- Job Title\n- Company Name\n- Location\n- Key Responsibilities\n- Required Skills (Hard Skills)\n- Soft Skills\n- Benefits/Perks\n\nProvide a comprehensive summary that a job seeker would find useful for tailoring their resume.`
   };
   return prompts[action] || '';
 }
@@ -829,7 +858,7 @@ function processResponse(action: string, text: string, data?: any) {
     });
   }
   
-  if (action === 'generate-email' || action === 'generate-interview' || action === 'skills-gap') {
+  if (action === 'generate-email' || action === 'generate-interview' || action === 'skills-gap' || action === 'ats-simulation') {
     try {
       let cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       const jsonMatch = cleanText.match(/[\[\{][\s\S]*[\]\}]/);
@@ -839,5 +868,6 @@ function processResponse(action: string, text: string, data?: any) {
     } catch (e) {}
   }
   
+  // Default: return text response (used for fetch-job, cover-letter, etc.)
   return NextResponse.json({ success: true, data: { text } });
 }
