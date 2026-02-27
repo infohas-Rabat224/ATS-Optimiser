@@ -11,15 +11,20 @@ import {
   CHAR_TARGET_MAX,
   CHAR_TARGET_OPTIMAL
 } from '@/lib/batch-processor';
+import { sanitizeForAI, buildSafePrompt } from '@/lib/prompt-security';
 import ZAI from 'z-ai-web-dev-sdk';
 
-// Build optimization prompt with next steps
-function buildOptimizePrompt(resumeText: string, jobText: string, language: string = 'en'): string {
+// Timeout constants
+const AI_TIMEOUT = 30000; // 30 seconds for AI calls
+const OCR_TIMEOUT = 20000; // 20 seconds for OCR
+
+// Build optimization prompt with next steps - uses prompt security
+function buildOptimizePrompt(resumeText: string, jobText: string, language: string = 'en'): { prompt: string; warnings: string[] } {
   const langInstructions = language === 'fr'
     ? 'Générez le CV optimisé en français.'
     : 'Generate the optimized resume in English.';
 
-  return `You are a SENIOR ATS RESUME OPTIMIZATION EXPERT. Create an ATS-MAXIMIZED resume.
+  const systemPrompt = `You are a SENIOR ATS RESUME OPTIMIZATION EXPERT. Create an ATS-MAXIMIZED resume.
 
 CRITICAL CONSTRAINTS:
 - Target EXACTLY ${CHAR_TARGET_OPTIMAL} text characters (excluding HTML tags)
@@ -54,12 +59,6 @@ HTML OUTPUT FORMAT:
 <li>• Language: Proficiency Level</li>
 </ul>
 
-ORIGINAL RESUME:
-${resumeText}
-
-TARGET JOB:
-${jobText}
-
 Return ONLY valid JSON:
 {
   "score": 85,
@@ -70,6 +69,10 @@ Return ONLY valid JSON:
   "next_step_suggestions": "3-5 actionable recommendations for further improvement",
   "optimized_content": "HTML CONTENT HERE - MUST BE ${CHAR_TARGET_MIN}-${CHAR_TARGET_MAX} TEXT CHARACTERS"
 }`;
+
+  // Use prompt security to prevent injection
+  const userContent = `ORIGINAL RESUME:\n${resumeText}\n\nTARGET JOB:\n${jobText}`;
+  return buildSafePrompt(systemPrompt, userContent);
 }
 
 // Generate next step suggestions based on the optimization result

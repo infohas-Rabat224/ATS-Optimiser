@@ -483,12 +483,24 @@ const DashboardView = ({ onClose, settings }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [exportResult, setExportResult] = useState<any>(null);
 
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Usage stats state
+  const [usageStats, setUsageStats] = useState<any>(null);
+
+  // Retry state
+  const [isRetrying, setIsRetrying] = useState(false);
+
   // Polling ref
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch recent batches on mount
+  // Fetch recent batches and usage stats on mount
   useEffect(() => {
     fetchRecentBatches();
+    fetchUsageStats();
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
@@ -517,6 +529,65 @@ const DashboardView = ({ onClose, settings }) => {
       }
     } catch (err) {
       console.error('Failed to fetch recent batches:', err);
+    }
+  };
+
+  const fetchUsageStats = async () => {
+    try {
+      const res = await fetch('/api/resume/stats');
+      const data = await res.json();
+      if (data.success) {
+        setUsageStats(data.stats);
+      }
+    } catch (err) {
+      console.error('Failed to fetch usage stats:', err);
+    }
+  };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setIsSearching(true);
+    try {
+      const res = await fetch(`/api/resume/search?query=${encodeURIComponent(searchQuery)}`);
+      const data = await res.json();
+      if (data.success) {
+        setSearchResults(data.resumes);
+      }
+    } catch (err) {
+      console.error('Search error:', err);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleRetryFailed = async (batchId: string) => {
+    setIsRetrying(true);
+    try {
+      // Reset failed resumes
+      const res = await fetch('/api/resume/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Restart batch processing
+        await fetch('/api/resume/batch-process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            batchId,
+            provider: settings?.provider,
+            apiKey: settings?.apiKey,
+            model: settings?.model
+          })
+        });
+        fetchRecentBatches();
+      }
+    } catch (err) {
+      console.error('Retry error:', err);
+    } finally {
+      setIsRetrying(false);
     }
   };
 
@@ -1010,7 +1081,7 @@ const DashboardView = ({ onClose, settings }) => {
             {/* Analytics Panel */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
               <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-                <BarChart2 className="w-5 h-5 text-indigo-600"/> Analytics
+                <BarChart2 className="w-5 h-5 text-indigo-600"/> Analytics & Cost Monitoring
               </h3>
               <div className="space-y-4">
                 <div className="flex justify-between text-sm">
@@ -1031,10 +1102,74 @@ const DashboardView = ({ onClose, settings }) => {
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">Total Resumes</span>
                   <span className="font-bold text-indigo-600">
-                    {recentBatches.reduce((sum, b) => sum + b.totalFiles, 0)}
+                    {usageStats?.totalResumes || recentBatches.reduce((sum, b) => sum + b.totalFiles, 0)}
                   </span>
                 </div>
+                {usageStats && (
+                  <>
+                    <div className="border-t border-slate-100 pt-3 mt-3">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-500">Total Tokens Used</span>
+                        <span className="font-bold text-slate-800">{usageStats.totalTokens?.toLocaleString() || 0}</span>
+                      </div>
+                      <div className="flex justify-between text-sm mt-2">
+                        <span className="text-slate-500">Estimated Cost</span>
+                        <span className="font-bold text-amber-600">${usageStats.totalCost?.toFixed(4) || '0.00'}</span>
+                      </div>
+                    </div>
+                    {Object.keys(usageStats.providerStats || {}).length > 0 && (
+                      <div className="border-t border-slate-100 pt-3 mt-3">
+                        <p className="text-xs font-bold text-slate-500 uppercase mb-2">By Provider</p>
+                        {Object.entries(usageStats.providerStats).map(([provider, stats]: [string, any]) => (
+                          <div key={provider} className="flex justify-between text-xs text-slate-600 mb-1">
+                            <span>{provider}</span>
+                            <span>{stats.count} files • ${stats.cost?.toFixed(4)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
+            </div>
+
+            {/* Search Panel */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                <Search className="w-5 h-5 text-indigo-600"/> Search Resumes
+              </h3>
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                  placeholder="Search by filename..."
+                  className="flex-1 p-2 border border-slate-200 rounded-lg text-sm"
+                />
+                <button
+                  onClick={handleSearch}
+                  disabled={isSearching}
+                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {isSearching ? <Loader2 className="w-4 h-4 animate-spin"/> : <Search className="w-4 h-4"/>}
+                </button>
+              </div>
+              {searchResults.length > 0 && (
+                <div className="max-h-40 overflow-y-auto border border-slate-100 rounded-lg">
+                  {searchResults.map((resume) => (
+                    <div key={resume.id} className="p-2 border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                      <div className="text-sm font-medium text-slate-700">{resume.fileName}</div>
+                      <div className="flex gap-2 text-xs text-slate-500 mt-1">
+                        <span className={`px-1.5 py-0.5 rounded ${resume.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                          {resume.status}
+                        </span>
+                        {resume.atsScoreAfter && <span>Score: {resume.atsScoreAfter}%</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Team Templates */}

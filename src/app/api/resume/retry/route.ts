@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getFailedResumes, resetResumeForRetry, getBatchProgress } from '@/lib/batch-processor';
 import { db } from '@/lib/db';
+import { getFailedResumes, resetResumeForRetry } from '@/lib/batch-processor';
 
-// GET /api/resume/retry - Get failed resumes for a batch
+// Get failed resumes for a batch
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -19,13 +19,11 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      batchId,
-      failedCount: failedResumes.length,
-      resumes: failedResumes
+      failedResumes
     });
 
   } catch (error: any) {
-    console.error('Retry list error:', error);
+    console.error('Retry fetch error:', error);
     return NextResponse.json({
       success: false,
       error: error.message || 'Failed to get failed resumes'
@@ -33,51 +31,59 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/resume/retry - Reset failed resumes for retry
+// Reset failed resumes for retry
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { resumeIds, batchId } = body;
 
-    if (!resumeIds || !Array.isArray(resumeIds) || resumeIds.length === 0) {
+    if (!resumeIds && !batchId) {
       return NextResponse.json({
         success: false,
-        error: 'Resume IDs are required'
+        error: 'Either resumeIds or batchId is required'
       }, { status: 400 });
     }
 
-    let successCount = 0;
-    let failCount = 0;
+    let resetCount = 0;
 
-    for (const resumeId of resumeIds) {
-      const success = await resetResumeForRetry(resumeId);
-      if (success) {
-        successCount++;
-      } else {
-        failCount++;
+    if (resumeIds && Array.isArray(resumeIds)) {
+      // Reset specific resumes
+      for (const resumeId of resumeIds) {
+        const success = await resetResumeForRetry(resumeId);
+        if (success) resetCount++;
       }
-    }
-
-    // If batchId provided, update batch status to pending if it was failed
-    if (batchId) {
+    } else if (batchId) {
+      // Reset all failed resumes in batch
       const batch = await db.batch.findUnique({ where: { batchId } });
-      if (batch && batch.status === 'failed') {
+      if (batch) {
+        const failedResumes = await db.resume.findMany({
+          where: { batchId: batch.id, status: 'failed' }
+        });
+        
+        for (const resume of failedResumes) {
+          const success = await resetResumeForRetry(resume.id);
+          if (success) resetCount++;
+        }
+        
+        // Update batch failed count
         await db.batch.update({
           where: { batchId },
-          data: { status: 'pending' }
+          data: { 
+            failedFiles: { decrement: resetCount },
+            status: 'pending'
+          }
         });
       }
     }
 
     return NextResponse.json({
       success: true,
-      message: `${successCount} resumes reset for retry`,
-      resetCount: successCount,
-      failedCount: failCount
+      message: `Reset ${resetCount} resumes for retry`,
+      resetCount
     });
 
   } catch (error: any) {
-    console.error('Retry error:', error);
+    console.error('Retry reset error:', error);
     return NextResponse.json({
       success: false,
       error: error.message || 'Failed to reset resumes for retry'
