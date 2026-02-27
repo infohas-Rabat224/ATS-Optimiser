@@ -9,7 +9,8 @@ let pdfjsLib: any = null;
 const getPdfLib = async () => {
   if (!pdfjsLib && typeof window !== 'undefined') {
     pdfjsLib = await import('pdfjs-dist');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    // Use unpkg CDN which has the correct version
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
   }
   return pdfjsLib;
 };
