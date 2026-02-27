@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { parseFileContent, sanitizeText } from '@/lib/batch-processor';
+import mammoth from 'mammoth';
+import pdf from 'pdf-parse';
+import Tesseract from 'tesseract.js';
+
+// Force Node.js runtime (required for pdf-parse, mammoth, tesseract.js)
+export const runtime = 'nodejs';
+export const maxDuration = 60; // 60 seconds timeout for OCR
 
 /**
  * AI-INDEPENDENT FILE EXTRACTION ENDPOINT
@@ -11,6 +17,94 @@ import { parseFileContent, sanitizeText } from '@/lib/batch-processor';
  * 
  * No API key is needed for file extraction.
  */
+
+// Text sanitization
+function sanitizeText(text: string): string {
+  let sanitized = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+  sanitized = sanitized.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
+  sanitized = sanitized.replace(/<(script|iframe|object|embed|form|input|button)[^>]*>/gi, '');
+  sanitized = sanitized.replace(/<\/(script|iframe|object|embed|form|input|button)>/gi, '');
+  sanitized = sanitized.replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '');
+  sanitized = sanitized.replace(/javascript:/gi, '');
+  sanitized = sanitized.replace(/\s+/g, ' ').trim();
+  return sanitized;
+}
+
+// PDF parsing
+async function parsePDF(buffer: Buffer): Promise<string> {
+  try {
+    const data = await pdf(buffer);
+    return data.text;
+  } catch (error) {
+    console.error('PDF parsing error:', error);
+    throw new Error('Failed to parse PDF file');
+  }
+}
+
+// DOCX parsing
+async function parseDOCX(buffer: Buffer): Promise<string> {
+  try {
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value;
+  } catch (error) {
+    console.error('DOCX parsing error:', error);
+    throw new Error('Failed to parse DOCX file');
+  }
+}
+
+// Image OCR parsing
+async function parseImage(buffer: Buffer): Promise<string> {
+  try {
+    const result = await Tesseract.recognize(buffer, 'eng');
+    return result.data.text;
+  } catch (error) {
+    console.error('Image OCR error:', error);
+    throw new Error('Failed to extract text from image');
+  }
+}
+
+// Main file parsing
+async function parseFile(file: File): Promise<{ content: string; error?: string }> {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const extension = file.name.toLowerCase().split('.').pop() || '';
+  const mimeType = file.type;
+
+  try {
+    let content = '';
+
+    if (mimeType === 'application/pdf' || extension === 'pdf') {
+      content = await parsePDF(buffer);
+    } else if (
+      mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      extension === 'docx'
+    ) {
+      content = await parseDOCX(buffer);
+    } else if (['image/jpeg', 'image/png', 'image/jpg'].includes(mimeType) || ['jpg', 'jpeg', 'png'].includes(extension)) {
+      content = await parseImage(buffer);
+    } else {
+      // Try to read as plain text
+      content = buffer.toString('utf-8');
+    }
+
+    // Sanitize the extracted text
+    const sanitizedContent = sanitizeText(content);
+
+    if (!sanitizedContent || sanitizedContent.length < 10) {
+      return {
+        content: sanitizedContent,
+        error: 'Extracted content is too short or empty'
+      };
+    }
+
+    return { content: sanitizedContent };
+  } catch (error: any) {
+    return {
+      content: '',
+      error: error.message || 'Failed to parse file'
+    };
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -51,20 +145,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse file content using AI-independent libraries
-    const result = await parseFileContent(file);
+    const result = await parseFile(file);
 
     if (result.error) {
       return NextResponse.json({
         success: false,
         error: result.error,
-        fileName: result.fileName
+        fileName: file.name
       }, { status: 400 });
     }
 
     return NextResponse.json({
       success: true,
       text: result.content,
-      fileName: result.fileName,
+      fileName: file.name,
       charCount: result.content.length
     });
 
