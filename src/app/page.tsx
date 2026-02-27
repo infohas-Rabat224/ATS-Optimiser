@@ -217,30 +217,38 @@ const generateInterviewPrepWithGemini = async (resumeHtml: string, jobDescriptio
 };
 
 const parseFile = async (file: File, settings: any): Promise<string> => {
+  const extension = file.name.toLowerCase().split('.').pop() || '';
+  const isImage = ['jpg', 'jpeg', 'png'].includes(extension) || 
+                  ['image/jpeg', 'image/png', 'image/jpg'].includes(file.type);
+
+  // DOCX files - use client-side mammoth (AI-independent)
   if (file.name.endsWith('.docx') || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
     if (window.mammoth) {
       const arrayBuffer = await file.arrayBuffer();
       const result = await window.mammoth.extractRawText({ arrayBuffer });
       return result.value;
     } else { throw new Error("DOCX parser not loaded yet."); }
-  } else if (file.name.endsWith('.pdf') || file.type === 'application/pdf') {
-    // Use backend API for PDF extraction
-    if (!settings?.apiKey) {
-      throw new Error("Please configure your API key in Settings for PDF extraction.");
-    }
-    const base64Data = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve((reader.result as string).split(',')[1]);
-      reader.onerror = reject;
+  } 
+  // PDF and Image files - use AI-independent backend extraction (NO API KEY REQUIRED)
+  else if (file.name.endsWith('.pdf') || file.type === 'application/pdf' || isImage) {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const response = await fetch('/api/resume/extract', {
+      method: 'POST',
+      body: formData
     });
     
-    const data = await callBackendAI('extract-file', {
-      base64: base64Data,
-      mimeType: 'application/pdf'
-    }, settings.provider, settings.apiKey, settings.model);
-    return data.text;
-  } else {
+    const result = await response.json();
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to extract text from file');
+    }
+    
+    return result.text;
+  } 
+  // Plain text files
+  else {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve(e.target?.result as string);
