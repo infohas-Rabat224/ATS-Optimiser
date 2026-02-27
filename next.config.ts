@@ -7,8 +7,8 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
-  // Exclude pdf.js from server bundle since it's client-side only
-  serverExternalPackages: ['pdfjs-dist', 'pdf-parse'],
+  // Exclude packages that have issues with bundling
+  serverExternalPackages: ['pdfjs-dist'],
 };
 
 export default nextConfig;

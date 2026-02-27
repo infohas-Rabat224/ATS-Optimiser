@@ -1,24 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import mammoth from 'mammoth';
-import pdf from 'pdf-parse';
-import Tesseract from 'tesseract.js';
+import * as pdfjsLib from 'pdfjs-dist';
 
-// Force Node.js runtime (required for pdf-parse, mammoth, tesseract.js)
+// Force Node.js runtime
 export const runtime = 'nodejs';
-export const maxDuration = 60; // 60 seconds timeout for OCR
+export const maxDuration = 60;
+
+// Configure PDF.js worker (server-side, no worker needed)
+if (typeof window === 'undefined') {
+  // @ts-ignore
+  globalThis.pdfjsWorker = null;
+}
 
 /**
  * AI-INDEPENDENT FILE EXTRACTION ENDPOINT
- * 
- * This endpoint extracts text from PDF, DOCX, and image files using local libraries:
- * - PDF: pdf-parse (no AI required)
- * - DOCX: mammoth (no AI required)
- * - Images: tesseract.js (OCR, no AI required)
- * 
- * No API key is needed for file extraction.
+ * Uses pure JavaScript libraries that work on Vercel serverless:
+ * - PDF: pdfjs-dist (pure JS, no native deps)
+ * - DOCX: mammoth (pure JS)
+ * - Images: Not supported on serverless (requires tesseract.js WebAssembly)
  */
 
-// Text sanitization
 function sanitizeText(text: string): string {
   let sanitized = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
   sanitized = sanitized.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
@@ -30,11 +31,26 @@ function sanitizeText(text: string): string {
   return sanitized;
 }
 
-// PDF parsing
+// PDF parsing using pdfjs-dist (pure JavaScript)
 async function parsePDF(buffer: Buffer): Promise<string> {
   try {
-    const data = await pdf(buffer);
-    return data.text;
+    const uint8Array = new Uint8Array(buffer);
+    const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+    const pdfDocument = await loadingTask.promise;
+    
+    let fullText = '';
+    const numPages = pdfDocument.numPages;
+    
+    for (let i = 1; i <= numPages; i++) {
+      const page = await pdfDocument.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item: any) => item.str)
+        .join(' ');
+      fullText += pageText + '\n';
+    }
+    
+    return fullText.trim();
   } catch (error) {
     console.error('PDF parsing error:', error);
     throw new Error('Failed to parse PDF file');
@@ -49,17 +65,6 @@ async function parseDOCX(buffer: Buffer): Promise<string> {
   } catch (error) {
     console.error('DOCX parsing error:', error);
     throw new Error('Failed to parse DOCX file');
-  }
-}
-
-// Image OCR parsing
-async function parseImage(buffer: Buffer): Promise<string> {
-  try {
-    const result = await Tesseract.recognize(buffer, 'eng');
-    return result.data.text;
-  } catch (error) {
-    console.error('Image OCR error:', error);
-    throw new Error('Failed to extract text from image');
   }
 }
 
@@ -80,13 +85,15 @@ async function parseFile(file: File): Promise<{ content: string; error?: string 
     ) {
       content = await parseDOCX(buffer);
     } else if (['image/jpeg', 'image/png', 'image/jpg'].includes(mimeType) || ['jpg', 'jpeg', 'png'].includes(extension)) {
-      content = await parseImage(buffer);
+      return {
+        content: '',
+        error: 'Image OCR is not supported on serverless. Please convert to PDF or DOCX.'
+      };
     } else {
       // Try to read as plain text
       content = buffer.toString('utf-8');
     }
 
-    // Sanitize the extracted text
     const sanitizedContent = sanitizeText(content);
 
     if (!sanitizedContent || sanitizedContent.length < 10) {
@@ -117,7 +124,6 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Validate file size (10MB max)
     const maxSize = 10 * 1024 * 1024;
     if (file.size > maxSize) {
       return NextResponse.json({
@@ -126,25 +132,20 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Validate file type
     const allowedTypes = [
       'application/pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'image/jpeg',
-      'image/png',
-      'image/jpg'
     ];
     const extension = file.name.toLowerCase().split('.').pop() || '';
-    const allowedExtensions = ['pdf', 'docx', 'doc', 'jpg', 'jpeg', 'png'];
+    const allowedExtensions = ['pdf', 'docx', 'doc', 'txt'];
 
     if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(extension)) {
       return NextResponse.json({
         success: false,
-        error: 'Unsupported file type. Supported: PDF, DOCX, JPG, PNG'
+        error: 'Unsupported file type. Supported: PDF, DOCX, TXT'
       }, { status: 400 });
     }
 
-    // Parse file content using AI-independent libraries
     const result = await parseFile(file);
 
     if (result.error) {
@@ -171,11 +172,10 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Also support GET for health check
 export async function GET() {
   return NextResponse.json({
     success: true,
-    message: 'File extraction endpoint ready. Supports: PDF, DOCX, JPG, PNG (AI-independent)',
+    message: 'File extraction endpoint ready. Supports: PDF, DOCX, TXT (AI-independent)',
     note: 'No API key required for file extraction'
   });
 }
