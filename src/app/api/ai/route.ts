@@ -406,20 +406,32 @@ async function handlePerplexity(action: string, data: any, apiKey: string, model
 function buildOptimizePrompt(data: any): string {
   const resumeText = data.resume?.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || '';
   const jobText = data.job?.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || '';
-  
+
   return `You are an ATS Resume Expert. Create an OPTIMIZED RESUME in HTML format.
 
 ═══════════════════════════════════════════════════════════════════════════════
-CRITICAL CHARACTER COUNT REQUIREMENT
+⛔⛔⛔ STRICT CHARACTER LIMIT - THIS IS NON-NEGOTIABLE ⛔⛔⛔
 ═══════════════════════════════════════════════════════════════════════════════
 
-⚠️ MINIMUM 2800 CHARACTERS - MAXIMUM 3200 CHARACTERS (text content only) ⚠️
+EXACTLY 2800-3200 CHARACTERS OF TEXT CONTENT (excluding HTML tags)
 
-This is MANDATORY. The resume MUST have at least 2800 characters of text content.
-- Count characters in the final output (excluding HTML tags)
-- If below 2800: Add more bullet points, expand descriptions, include more skills
-- If above 3200: Trim less important content while keeping key achievements
-- Maintain ONE PAGE layout - do not exceed
+🛑 IF YOUR OUTPUT EXCEEDS 3200 CHARACTERS, IT WILL BE REJECTED! 🛑
+🛑 IF YOUR OUTPUT IS BELOW 2800 CHARACTERS, IT WILL BE REJECTED! 🛑
+
+STEPS TO ENSURE CORRECT CHARACTER COUNT:
+1. Write the resume content first
+2. COUNT THE CHARACTERS (excluding HTML tags like <p>, <li>, <strong>, etc.)
+3. If over 3200: DELETE bullet points until under 3200
+4. If under 2800: ADD more details to existing bullet points
+
+MAXIMUM STRUCTURE ALLOWED (to stay under 3200 characters):
+- 1 Name line
+- 1 Contact line
+- 1 Professional Summary paragraph (3 sentences MAX)
+- 4 Skill categories with 4-5 skills each (one bullet per category)
+- 2 Job positions with exactly 3-4 bullets each
+- 1 Education entry
+- 2-3 Languages
 
 ═══════════════════════════════════════════════════════════════════════════════
 CRITICAL BULLET FORMATTING RULES - MUST FOLLOW EXACTLY
@@ -453,10 +465,11 @@ OTHER CRITICAL RULES
 1. Output MUST fit on ONE A4 page with margins 0.95cm
 2. NO duplicate content - check your output before returning
 3. Font: Times New Roman, 12pt
-4. Maximum 5 bullets per job position (use all 5 to reach character minimum)
-5. Maximum 4 skill categories with detailed skills listed
+4. EXACTLY 3-4 bullets per job position (NOT 5!)
+5. EXACTLY 4 skill categories with 4-5 skills each
 6. Include quantified achievements with numbers/percentages
-7. Professional summary should be 3-4 detailed sentences
+7. Professional summary should be 3 sentences MAX (not 4!)
+8. COUNT YOUR CHARACTERS BEFORE OUTPUTTING!
 
 ═══════════════════════════════════════════════════════════════════════════════
 EXACT OUTPUT FORMAT (copy this structure exactly)
@@ -479,11 +492,10 @@ EXACT OUTPUT FORMAT (copy this structure exactly)
 <p><strong>PROFESSIONAL EXPERIENCE</strong></p>
 <p><strong>Job Title</strong> Company | City, Country | Month Year – Month Year</p>
 <ul>
-<li>• Delivered exceptional customer service to 100+ clients daily, maintaining a 98% satisfaction rating through proactive communication and efficient problem resolution.</li>
-<li>• Improved operational efficiency by 20% through implementation of streamlined workflows and standardized procedures.</li>
-<li>• Led and mentored a team of 8 staff members, consistently exceeding performance targets by 15%.</li>
-<li>• Implemented new scheduling system reducing average wait times by 30% and increasing daily service capacity.</li>
-<li>• Developed and executed training programs for new hires, reducing onboarding time by 25%.</li>
+<li>• Delivered exceptional customer service to 100+ clients daily with 98% satisfaction.</li>
+<li>• Improved operational efficiency by 20% through streamlined workflows.</li>
+<li>• Led a team of 8 staff members, exceeding targets by 15%.</li>
+<li>• Implemented scheduling system reducing wait times by 30%.</li>
 </ul>
 
 <p><strong>EDUCATION</strong></p>
@@ -591,6 +603,70 @@ Write the complete cover letter in the exact format shown above. Output ONLY the
   return prompts[action] || '';
 }
 
+// Count text characters excluding HTML tags
+function countTextCharacters(html: string): number {
+  const textOnly = html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  return textOnly.length;
+}
+
+// Enforce character limits by truncating content if needed
+function enforceCharacterLimit(html: string): string {
+  const MIN_CHARS = 2800;
+  const MAX_CHARS = 3200;
+  
+  let result = html;
+  let charCount = countTextCharacters(result);
+  
+  console.log(`Character count before enforcement: ${charCount}`);
+  
+  // If over the limit, progressively remove bullets
+  if (charCount > MAX_CHARS) {
+    console.log(`Content too long (${charCount}), truncating...`);
+    
+    // Get all list items
+    const liRegex = /<li>•[^<]+<\/li>/gi;
+    const lis = result.match(liRegex) || [];
+    
+    // Remove bullets from the end until we're under the limit
+    // But keep a minimum number of bullets
+    const minBulletsPerSection = 3;
+    let bulletsRemoved = 0;
+    
+    while (charCount > MAX_CHARS && bulletsRemoved < lis.length - minBulletsPerSection * 2) {
+      // Remove the longest bullet points first
+      const bulletLengths = lis.map((li, idx) => ({
+        idx,
+        length: li.length,
+        content: li
+      })).sort((a, b) => b.length - a.length);
+      
+      // Mark one bullet for removal
+      const toRemove = bulletLengths[bulletsRemoved];
+      if (toRemove) {
+        result = result.replace(toRemove.content, '');
+        bulletsRemoved++;
+        charCount = countTextCharacters(result);
+      } else {
+        break;
+      }
+    }
+    
+    // Clean up empty lists and extra whitespace
+    result = result.replace(/<ul>\s*<\/ul>/gi, '');
+    result = result.replace(/\n{3,}/g, '\n\n');
+    
+    charCount = countTextCharacters(result);
+    console.log(`Character count after truncation: ${charCount}`);
+  }
+  
+  // Log warning if under minimum
+  if (charCount < MIN_CHARS) {
+    console.warn(`Warning: Content below minimum (${charCount} < ${MIN_CHARS})`);
+  }
+  
+  return result;
+}
+
 // Post-process HTML to fix combined bullets - VERY AGGRESSIVE
 function fixCombinedBullets(html: string): string {
   console.log('fixCombinedBullets called on content length:', html?.length || 0);
@@ -688,6 +764,8 @@ function processResponse(action: string, text: string) {
         // Fix combined bullets in the output
         if (parsed.optimized_content) {
           parsed.optimized_content = fixCombinedBullets(parsed.optimized_content);
+          // Enforce character limits
+          parsed.optimized_content = enforceCharacterLimit(parsed.optimized_content);
         }
         // Ensure we have all required fields
         return NextResponse.json({ 
@@ -711,12 +789,14 @@ function processResponse(action: string, text: string) {
     }
     
     // Fallback if JSON parsing fails
+    let fallbackContent = fixCombinedBullets(text);
+    fallbackContent = enforceCharacterLimit(fallbackContent);
     return NextResponse.json({ 
       success: true, 
       data: { 
         score: 75, 
         score_breakdown: { impact: 80, brevity: 75, keywords: 70 }, 
-        optimized_content: fixCombinedBullets(text)
+        optimized_content: fallbackContent
       } 
     });
   }
