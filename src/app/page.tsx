@@ -2,12 +2,17 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, RefreshCw, ChevronRight, BarChart2, Download, Copy, Briefcase, FileUp, FileDown, Loader2, Search, Mail, MessageSquare, Printer, Edit3, Save, Send, History, Settings, X, Trash2, Eye, EyeOff, Plane, ShieldCheck, Users, Layout, Activity, FileStack, Cloud, Check, Lock, Globe } from 'lucide-react';
-import * as pdfjsLib from 'pdfjs-dist';
 
-// Configure PDF.js worker
-if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-}
+// Dynamic PDF.js import - loaded only on client side
+let pdfjsLib: any = null;
+
+const getPdfLib = async () => {
+  if (!pdfjsLib && typeof window !== 'undefined') {
+    pdfjsLib = await import('pdfjs-dist');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+  }
+  return pdfjsLib;
+};
 
 // --- BACKEND API HELPER ---
 const callBackendAI = async (action: string, data: any, provider?: string, apiKey?: string, model?: string) => {
@@ -238,9 +243,15 @@ const parseFile = async (file: File, settings: any): Promise<string> => {
   // PDF files - use client-side PDF.js (AI-independent, NO API KEY REQUIRED)
   else if (file.name.endsWith('.pdf') || file.type === 'application/pdf') {
     try {
+      // Dynamically load PDF.js
+      const pdfLib = await getPdfLib();
+      if (!pdfLib) {
+        throw new Error('PDF parser failed to load. Please refresh the page and try again.');
+      }
+      
       const arrayBuffer = await file.arrayBuffer();
       const uint8Array = new Uint8Array(arrayBuffer);
-      const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+      const loadingTask = pdfLib.getDocument({ data: uint8Array });
       const pdfDocument = await loadingTask.promise;
       
       let fullText = '';

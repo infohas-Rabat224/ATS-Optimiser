@@ -1,11 +1,6 @@
 import { db } from '@/lib/db';
 import { randomUUID } from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
 import mammoth from 'mammoth';
-import pdf from 'pdf-parse';
-import Tesseract from 'tesseract.js';
 
 // =============================================================================
 // TYPES
@@ -198,17 +193,14 @@ export function sanitizeText(text: string): string {
 }
 
 // =============================================================================
-// FILE PARSING
+// FILE PARSING (Server-side for batch processing)
+// Note: PDF parsing done client-side due to Vercel serverless limitations
 // =============================================================================
 
 async function parsePDF(buffer: Buffer): Promise<string> {
-  try {
-    const data = await pdf(buffer);
-    return data.text;
-  } catch (error) {
-    console.error('PDF parsing error:', error);
-    throw new Error('Failed to parse PDF file');
-  }
+  // PDF parsing is handled client-side for Vercel compatibility
+  // Server-side PDF parsing is not available in this configuration
+  throw new Error('PDF files must be pre-processed client-side. Please use the single-file upload or ensure PDFs are converted to DOCX format for batch processing.');
 }
 
 async function parseDOCX(buffer: Buffer): Promise<string> {
@@ -221,14 +213,9 @@ async function parseDOCX(buffer: Buffer): Promise<string> {
   }
 }
 
+// Note: Image OCR removed for serverless compatibility
 async function parseImage(buffer: Buffer): Promise<string> {
-  try {
-    const result = await Tesseract.recognize(buffer, 'eng');
-    return result.data.text;
-  } catch (error) {
-    console.error('Image OCR error:', error);
-    throw new Error('Failed to extract text from image');
-  }
+  throw new Error('Image files are not supported in batch processing. Please convert to DOCX format or use single-file upload.');
 }
 
 export async function parseFileContent(file: File): Promise<ParsedFile> {
