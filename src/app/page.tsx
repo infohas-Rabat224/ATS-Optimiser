@@ -4,11 +4,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, RefreshCw, ChevronRight, BarChart2, Download, Copy, Briefcase, FileUp, FileDown, Loader2, Search, Mail, MessageSquare, Printer, Edit3, Save, Send, History, Settings, X, Trash2, Eye, EyeOff, Plane, ShieldCheck, Users, Layout, Activity, FileStack, Cloud, Check, Lock, Globe } from 'lucide-react';
 
 // --- BACKEND API HELPER ---
-const callBackendAI = async (action: string, data: any) => {
+const callBackendAI = async (action: string, data: any, provider?: string, apiKey?: string, model?: string) => {
   const response = await fetch('/api/ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, data })
+    body: JSON.stringify({ action, data, provider, apiKey, model })
   });
   const result = await response.json();
   if (!result.success) {
@@ -127,13 +127,16 @@ const getDocxHtml = (content) => {
 // --- AI FUNCTIONS (Using Backend API) ---
 
 const analyzeWithGemini = async (resumeText: string, jobDescription: string, settings: any, airlineProfile: string) => {
+  if (!settings?.apiKey) {
+    throw new Error("Please configure your API key in Settings.");
+  }
   try {
     const data = await callBackendAI('optimize-resume', {
       resume: resumeText,
       job: jobDescription,
       settings,
       airlineProfile
-    });
+    }, settings.provider, settings.apiKey, settings.model);
     
     // Ensure score_breakdown exists
     if (!data.score_breakdown) {
@@ -166,42 +169,54 @@ const AVIATION_KEYWORDS = `
   Soft Skills: Decision Making Under Pressure, Multi-Crew Coordination, Situational Awareness.
 `;
 
-const runATSSimulation = async (resumeHtml: string) => {
+const runATSSimulation = async (resumeHtml: string, settings: any) => {
+  if (!settings?.apiKey) {
+    throw new Error("Please configure your API key in Settings.");
+  }
   try {
-    return await callBackendAI('ats-simulation', { resumeHtml });
+    return await callBackendAI('ats-simulation', { resumeHtml }, settings.provider, settings.apiKey, settings.model);
   } catch (error) { throw new Error("Simulation failed."); }
 };
 
 const generateCoverLetterWithGemini = async (optimizedResumeHtml: string, jobDescription: string, settings: any) => {
+  if (!settings?.apiKey) {
+    throw new Error("Please configure your API key in Settings.");
+  }
   try {
     const data = await callBackendAI('generate-cover-letter', {
       resume: optimizedResumeHtml,
       job: jobDescription,
       settings
-    });
+    }, settings.provider, settings.apiKey, settings.model);
     return data;
   } catch (error) { throw new Error("Cover Letter generation failed."); }
 };
 
-const generateColdEmailWithGemini = async (resumeHtml: string, jobDescription: string) => {
+const generateColdEmailWithGemini = async (resumeHtml: string, jobDescription: string, settings: any) => {
+  if (!settings?.apiKey) {
+    throw new Error("Please configure your API key in Settings.");
+  }
   try {
     return await callBackendAI('generate-email', {
       resume: resumeHtml,
       job: jobDescription
-    });
+    }, settings.provider, settings.apiKey, settings.model);
   } catch (error) { throw new Error("Email generation failed."); }
 };
 
-const generateInterviewPrepWithGemini = async (resumeHtml: string, jobDescription: string) => {
+const generateInterviewPrepWithGemini = async (resumeHtml: string, jobDescription: string, settings: any) => {
+  if (!settings?.apiKey) {
+    throw new Error("Please configure your API key in Settings.");
+  }
   try {
     return await callBackendAI('generate-interview', {
       resume: resumeHtml,
       job: jobDescription
-    });
+    }, settings.provider, settings.apiKey, settings.model);
   } catch (error) { throw new Error("Interview Prep generation failed."); }
 };
 
-const parseFile = async (file: File): Promise<string> => {
+const parseFile = async (file: File, settings: any): Promise<string> => {
   if (file.name.endsWith('.docx') || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
     if (window.mammoth) {
       const arrayBuffer = await file.arrayBuffer();
@@ -210,6 +225,9 @@ const parseFile = async (file: File): Promise<string> => {
     } else { throw new Error("DOCX parser not loaded yet."); }
   } else if (file.name.endsWith('.pdf') || file.type === 'application/pdf') {
     // Use backend API for PDF extraction
+    if (!settings?.apiKey) {
+      throw new Error("Please configure your API key in Settings for PDF extraction.");
+    }
     const base64Data = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
@@ -220,7 +238,7 @@ const parseFile = async (file: File): Promise<string> => {
     const data = await callBackendAI('extract-file', {
       base64: base64Data,
       mimeType: 'application/pdf'
-    });
+    }, settings.provider, settings.apiKey, settings.model);
     return data.text;
   } else {
     return new Promise((resolve, reject) => {
@@ -232,9 +250,12 @@ const parseFile = async (file: File): Promise<string> => {
   }
 };
 
-const fetchJobWithGemini = async (url: string) => {
+const fetchJobWithGemini = async (url: string, settings: any) => {
+  if (!settings?.apiKey) {
+    throw new Error("Please configure your API key in Settings.");
+  }
   try {
-    const data = await callBackendAI('fetch-job', { url });
+    const data = await callBackendAI('fetch-job', { url }, settings.provider, settings.apiKey, settings.model);
     return data.text || data;
   } catch (error) { throw new Error("Could not automatically fetch job details."); }
 };
@@ -321,12 +342,47 @@ const SettingsModal = ({ isOpen, onClose, settings, setSettings }) => {
    if (!isOpen) return null;
    return (
       <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center animate-fade-in">
-         <div className="bg-white rounded-xl shadow-xl w-96 p-6">
+         <div className="bg-white rounded-xl shadow-xl w-96 p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-slate-800 flex items-center gap-2"><Settings className="w-5 h-5"/> Settings</h3><button onClick={onClose}><X className="w-5 h-5 text-slate-400 hover:text-slate-600"/></button></div>
             <div className="space-y-4">
+               <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">AI Provider</label>
+                  <select value={settings.provider} onChange={(e) => setSettings({...settings, provider: e.target.value, model: e.target.value === 'gemini' ? 'gemini-2.0-flash' : e.target.value === 'openai' ? 'gpt-4o-mini' : ''})} className="w-full p-2 border border-slate-300 rounded text-sm">
+                    <option value="gemini">Google Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="groq">Groq</option>
+                  </select>
+               </div>
+               <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">API Key <span className="text-red-500">*</span></label>
+                  <input 
+                    type="password" 
+                    value={settings.apiKey} 
+                    onChange={(e) => setSettings({...settings, apiKey: e.target.value})} 
+                    placeholder="Enter your API key"
+                    className="w-full p-2 border border-slate-300 rounded text-sm"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">Get your API key from {settings.provider === 'gemini' ? 'Google AI Studio' : settings.provider === 'openai' ? 'OpenAI Platform' : settings.provider + ' dashboard'}</p>
+               </div>
+               <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Model (optional)</label>
+                  <input 
+                    type="text" 
+                    value={settings.model} 
+                    onChange={(e) => setSettings({...settings, model: e.target.value})} 
+                    placeholder={settings.provider === 'gemini' ? 'gemini-2.0-flash' : 'gpt-4o-mini'}
+                    className="w-full p-2 border border-slate-300 rounded text-sm"
+                  />
+               </div>
                <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tone</label><select value={settings.tone} onChange={(e) => setSettings({...settings, tone: e.target.value})} className="w-full p-2 border border-slate-300 rounded text-sm"><option>Corporate Professional</option><option>Executive Leadership</option><option>Startup / Agile</option><option>Creative</option><option>Academic</option></select></div>
                <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Strategy</label><select value={settings.strictness} onChange={(e) => setSettings({...settings, strictness: e.target.value})} className="w-full p-2 border border-slate-300 rounded text-sm"><option>Balanced</option><option>Aggressive</option><option>Conservative</option></select></div>
             </div>
+            {!settings.apiKey && (
+              <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                ⚠️ API key is required for AI features. Please enter your {settings.provider?.toUpperCase() || 'AI provider'} API key.
+              </div>
+            )}
             <div className="mt-6 flex justify-end"><button onClick={onClose} className="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-indigo-700">Save</button></div>
          </div>
       </div>
@@ -480,7 +536,13 @@ export default function ATSApp() {
   const [isGeneratingCoverLetter, setIsGeneratingCoverLetter] = useState(false);
   const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
   
-  const [settings, setSettings] = useState({ tone: "Corporate Professional", strictness: "Balanced" });
+  const [settings, setSettings] = useState({ 
+    tone: "Corporate Professional", 
+    strictness: "Balanced",
+    provider: "gemini",
+    apiKey: "",
+    model: "gemini-2.0-flash"
+  });
   const [showSettings, setShowSettings] = useState(false);
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -588,7 +650,7 @@ export default function ATSApp() {
     if (!file) return;
     setIsParsing(true);
     try {
-      const text = await parseFile(file);
+      const text = await parseFile(file, settings);
       setResumeText(text);
     } catch (error) {
       alert("Error parsing file: " + error.message);
@@ -721,7 +783,7 @@ export default function ATSApp() {
     setIsFetchingJob(true);
     setJobText("");
     try {
-      const text = await fetchJobWithGemini(jobUrl);
+      const text = await fetchJobWithGemini(jobUrl, settings);
       setJobText(text);
     } catch (error) { alert(error.message); } 
     finally { setIsFetchingJob(false); }
@@ -745,7 +807,7 @@ export default function ATSApp() {
     setIsSimulating(true);
     setShowSimulator(true);
     try {
-      const data = await runATSSimulation(result.optimized_content);
+      const data = await runATSSimulation(result.optimized_content, settings);
       setSimulatorData(data);
     } catch (e) { alert(e.message); setShowSimulator(false); }
     finally { setIsSimulating(false); }
@@ -767,7 +829,7 @@ export default function ATSApp() {
     setIsGeneratingEmail(true);
     try {
       const currentContent = resumePreviewRef.current ? resumePreviewRef.current.innerHTML : result.optimized_content;
-      const data = await generateColdEmailWithGemini(currentContent, jobText);
+      const data = await generateColdEmailWithGemini(currentContent, jobText, settings);
       setEmailResult(data);
     } catch (e) { alert(e.message); } 
     finally { setIsGeneratingEmail(false); }
@@ -778,7 +840,7 @@ export default function ATSApp() {
     setLoading(true);
     try {
       const currentContent = resumePreviewRef.current ? resumePreviewRef.current.innerHTML : result.optimized_content;
-      const data = await generateInterviewPrepWithGemini(currentContent, jobText);
+      const data = await generateInterviewPrepWithGemini(currentContent, jobText, settings);
       setInterviewResult(data.questions);
       setStep(4);
     } catch (e) { alert(e.message); } 
