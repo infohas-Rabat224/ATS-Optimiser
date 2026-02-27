@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import ZAI from 'z-ai-web-dev-sdk';
 
-console.log('🔄 API route loaded - v6 (using z-ai-web-dev-sdk with env vars)');
+console.log('🔄 API route loaded - v7 (with web search and more providers)');
 
 // Configuration from environment variables
 function getAIConfig() {
@@ -35,11 +35,53 @@ async function getZAIClient() {
   return zaiClient;
 }
 
+// Web search for job fetching
+async function fetchJobFromUrl(url: string): Promise<string> {
+  try {
+    const zai = await getZAIClient();
+    if (!zai) {
+      throw new Error('AI service not configured');
+    }
+    
+    // Use web search to get job information
+    const searchResult = await zai.functions.invoke("web_search", {
+      query: `job listing ${url}`,
+      num: 5
+    });
+    
+    // Also try to read the URL directly
+    try {
+      const readerResult = await zai.functions.invoke("web_reader", { url });
+      if (readerResult && readerResult.content) {
+        return `Job Listing Content:\n${readerResult.content}\n\nRelated Search Results:\n${JSON.stringify(searchResult, null, 2)}`;
+      }
+    } catch (e) {
+      // Web reader failed, use search results only
+    }
+    
+    // Return search results
+    if (searchResult && Array.isArray(searchResult) && searchResult.length > 0) {
+      return searchResult.map((r: any) => 
+        `Title: ${r.name || 'N/A'}\nURL: ${r.url || 'N/A'}\nSnippet: ${r.snippet || 'N/A'}`
+      ).join('\n\n');
+    }
+    
+    throw new Error('Could not fetch job details from URL');
+  } catch (error: any) {
+    throw new Error(`Failed to fetch job: ${error.message}`);
+  }
+}
+
 // Multi-provider AI endpoint
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { action, data, provider, apiKey, model } = body;
+    
+    // Handle job fetching separately (uses web search)
+    if (action === 'fetch-job') {
+      return await handleFetchJob(data, provider, apiKey, model);
+    }
     
     // Handle local PDF extraction (no AI needed)
     if (action === 'extract-local') {
@@ -63,6 +105,12 @@ export async function POST(request: NextRequest) {
           return await handleOpenRouter(action, data, apiKey, model);
         case 'perplexity':
           return await handlePerplexity(action, data, apiKey, model);
+        case 'glm':
+          return await handleGLM(action, data, apiKey, model);
+        case 'mistral':
+          return await handleMistral(action, data, apiKey, model);
+        case 'xai':
+          return await handleXAI(action, data, apiKey, model);
         default:
           return NextResponse.json({ 
             success: false, 
@@ -75,6 +123,87 @@ export async function POST(request: NextRequest) {
     return await handleDefaultAI(action, data);
   } catch (error: any) {
     console.error('AI API Error:', error);
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+// Handle job fetching
+async function handleFetchJob(data: any, provider?: string, apiKey?: string, model?: string) {
+  const url = data.url;
+  if (!url) {
+    return NextResponse.json({ success: false, error: 'No URL provided' }, { status: 400 });
+  }
+  
+  try {
+    // First, try to fetch job content from URL using web search
+    let jobContent = `Job URL: ${url}`;
+    
+    // Try using z-ai's web search if available
+    try {
+      const zai = await getZAIClient();
+      if (zai) {
+        // Try web reader first
+        try {
+          const readerResult = await zai.functions.invoke("web_reader", { url });
+          if (readerResult && readerResult.content) {
+            jobContent = readerResult.content;
+          }
+        } catch (e) {
+          // Web reader failed, try web search
+          try {
+            const searchResult = await zai.functions.invoke("web_search", {
+              query: `job listing site:${url.replace(/^https?:\/\//, '').split('/')[0]}`,
+              num: 3
+            });
+            if (searchResult && Array.isArray(searchResult) && searchResult.length > 0) {
+              jobContent = searchResult.map((r: any) => 
+                `${r.name || ''}\n${r.snippet || ''}`
+              ).join('\n\n');
+            }
+          } catch (e2) {
+            console.log('Web search also failed:', e2);
+          }
+        }
+      }
+    } catch (e) {
+      console.log('Failed to fetch from web:', e);
+    }
+    
+    // Then use AI to analyze the job content
+    const prompt = `You are a job listing analyst. Analyze the following job information and extract key details.\n\nJOB INFORMATION:\n${jobContent}\n\nExtract and summarize:\n- Job Title\n- Company Name\n- Location\n- Key Responsibilities\n- Required Skills (Hard Skills)\n- Soft Skills\n- Benefits/Perks\n- Salary (if mentioned)\n\nProvide a comprehensive summary that a job seeker would find useful for tailoring their resume.`;
+    
+    // Use the specified provider to analyze
+    if (provider && apiKey) {
+      switch (provider) {
+        case 'gemini':
+          return await handleGemini('fetch-job', { jobContent, prompt }, apiKey, model);
+        case 'openai':
+          return await handleOpenAI('fetch-job', { jobContent, prompt }, apiKey, model);
+        case 'deepseek':
+          return await handleDeepSeek('fetch-job', { jobContent, prompt }, apiKey, model);
+        case 'groq':
+          return await handleGroq('fetch-job', { jobContent, prompt }, apiKey, model);
+        case 'anthropic':
+          return await handleAnthropic('fetch-job', { jobContent, prompt }, apiKey, model);
+        case 'glm':
+          return await handleGLM('fetch-job', { jobContent, prompt }, apiKey, model);
+        case 'mistral':
+          return await handleMistral('fetch-job', { jobContent, prompt }, apiKey, model);
+        case 'xai':
+          return await handleXAI('fetch-job', { jobContent, prompt }, apiKey, model);
+        default:
+          // Use prompt directly
+          const aiData = { resume: '', job: jobContent };
+          return await handleGemini('fetch-job', { ...aiData, prompt }, apiKey, model);
+      }
+    } else {
+      // No API key provided
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Please configure an API key in Settings to fetch job details.' 
+      }, { status: 400 });
+    }
+  } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
@@ -445,6 +574,129 @@ async function handlePerplexity(action: string, data: any, apiKey: string, model
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`Perplexity API error: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    const text = result.choices?.[0]?.message?.content || '';
+    
+    return processResponse(action, text, data);
+  } catch (error: any) {
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+// GLM (Zhipu AI) handler
+async function handleGLM(action: string, data: any, apiKey: string, model: string = 'glm-4-flash') {
+  const baseUrl = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
+  
+  try {
+    if (action === 'extract-file') {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'GLM does not support image/PDF extraction. Please use Gemini or OpenAI for file uploads.' 
+      }, { status: 400 });
+    }
+
+    const content = action === 'optimize-resume' ? buildOptimizePrompt(data) : getPromptForAction(action, data);
+    
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model || 'glm-4-flash',
+        messages: [{ role: 'user', content }],
+        max_tokens: 4096
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`GLM API error: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    const text = result.choices?.[0]?.message?.content || '';
+    
+    return processResponse(action, text, data);
+  } catch (error: any) {
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+// Mistral AI handler
+async function handleMistral(action: string, data: any, apiKey: string, model: string = 'mistral-small-latest') {
+  const baseUrl = 'https://api.mistral.ai/v1/chat/completions';
+  
+  try {
+    if (action === 'extract-file') {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'Mistral does not support image/PDF extraction. Please use Gemini or OpenAI for file uploads.' 
+      }, { status: 400 });
+    }
+
+    const content = action === 'optimize-resume' ? buildOptimizePrompt(data) : getPromptForAction(action, data);
+    
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model || 'mistral-small-latest',
+        messages: [{ role: 'user', content }],
+        max_tokens: 4096
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Mistral API error: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    const text = result.choices?.[0]?.message?.content || '';
+    
+    return processResponse(action, text, data);
+  } catch (error: any) {
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+// X.AI (Grok) handler
+async function handleXAI(action: string, data: any, apiKey: string, model: string = 'grok-beta') {
+  const baseUrl = 'https://api.x.ai/v1/chat/completions';
+  
+  try {
+    if (action === 'extract-file') {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'X.AI does not support image/PDF extraction. Please use Gemini or OpenAI for file uploads.' 
+      }, { status: 400 });
+    }
+
+    const content = action === 'optimize-resume' ? buildOptimizePrompt(data) : getPromptForAction(action, data);
+    
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model || 'grok-beta',
+        messages: [{ role: 'user', content }],
+        max_tokens: 4096
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`X.AI API error: ${response.status} - ${errorText}`);
     }
 
     const result = await response.json();

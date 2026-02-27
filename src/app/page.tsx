@@ -255,9 +255,24 @@ const fetchJobWithGemini = async (url: string, settings: any) => {
     throw new Error("Please configure your API key in Settings.");
   }
   try {
-    const data = await callBackendAI('fetch-job', { url }, settings.provider, settings.apiKey, settings.model);
-    return data.text || data;
-  } catch (error) { throw new Error("Could not automatically fetch job details."); }
+    // Send URL to backend for processing with web search
+    const response = await fetch('/api/ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        action: 'fetch-job', 
+        data: { url },
+        provider: settings.provider,
+        apiKey: settings.apiKey,
+        model: settings.model
+      })
+    });
+    const result = await response.json();
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to fetch job details');
+    }
+    return result.data.text || result.data;
+  } catch (error) { throw new Error("Could not automatically fetch job details. Please paste the job description manually."); }
 };
 
 // --- COMPONENTS ---
@@ -340,6 +355,22 @@ const StepIndicator = ({ currentStep, setStep }) => {
 
 const SettingsModal = ({ isOpen, onClose, settings, setSettings }) => {
    if (!isOpen) return null;
+   
+   const providers = [
+     { id: 'gemini', name: 'Google Gemini', models: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'], keyUrl: 'https://aistudio.google.com/apikey' },
+     { id: 'openai', name: 'OpenAI', models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'], keyUrl: 'https://platform.openai.com/api-keys' },
+     { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-chat', 'deepseek-coder'], keyUrl: 'https://platform.deepseek.com' },
+     { id: 'groq', name: 'Groq', models: ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'mixtral-8x7b-32768'], keyUrl: 'https://console.groq.com/keys' },
+     { id: 'anthropic', name: 'Anthropic (Claude)', models: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'], keyUrl: 'https://console.anthropic.com' },
+     { id: 'glm', name: 'GLM (Zhipu AI)', models: ['glm-4-flash', 'glm-4', 'glm-4-plus'], keyUrl: 'https://open.bigmodel.cn' },
+     { id: 'mistral', name: 'Mistral AI', models: ['mistral-small-latest', 'mistral-medium-latest', 'mistral-large-latest'], keyUrl: 'https://console.mistral.ai' },
+     { id: 'xai', name: 'X.AI (Grok)', models: ['grok-beta', 'grok-2-1212'], keyUrl: 'https://console.x.ai' },
+     { id: 'openrouter', name: 'OpenRouter', models: ['anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'google/gemini-pro-1.5'], keyUrl: 'https://openrouter.ai/keys' },
+     { id: 'perplexity', name: 'Perplexity', models: ['llama-3.1-sonar-large-128k-online', 'llama-3.1-sonar-small-128k-online'], keyUrl: 'https://www.perplexity.ai/settings/api' },
+   ];
+   
+   const currentProvider = providers.find(p => p.id === settings.provider) || providers[0];
+   
    return (
       <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center animate-fade-in">
          <div className="bg-white rounded-xl shadow-xl w-96 p-6 max-h-[90vh] overflow-y-auto">
@@ -347,11 +378,11 @@ const SettingsModal = ({ isOpen, onClose, settings, setSettings }) => {
             <div className="space-y-4">
                <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">AI Provider</label>
-                  <select value={settings.provider} onChange={(e) => setSettings({...settings, provider: e.target.value, model: e.target.value === 'gemini' ? 'gemini-2.0-flash' : e.target.value === 'openai' ? 'gpt-4o-mini' : ''})} className="w-full p-2 border border-slate-300 rounded text-sm">
-                    <option value="gemini">Google Gemini</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="groq">Groq</option>
+                  <select value={settings.provider} onChange={(e) => {
+                    const newProvider = providers.find(p => p.id === e.target.value);
+                    setSettings({...settings, provider: e.target.value, model: newProvider?.models[0] || ''});
+                  }} className="w-full p-2 border border-slate-300 rounded text-sm">
+                    {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                </div>
                <div>
@@ -363,24 +394,22 @@ const SettingsModal = ({ isOpen, onClose, settings, setSettings }) => {
                     placeholder="Enter your API key"
                     className="w-full p-2 border border-slate-300 rounded text-sm"
                   />
-                  <p className="text-xs text-slate-400 mt-1">Get your API key from {settings.provider === 'gemini' ? 'Google AI Studio' : settings.provider === 'openai' ? 'OpenAI Platform' : settings.provider + ' dashboard'}</p>
+                  <a href={currentProvider.keyUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:underline mt-1 block">
+                    Get your {currentProvider.name} API key →
+                  </a>
                </div>
                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Model (optional)</label>
-                  <input 
-                    type="text" 
-                    value={settings.model} 
-                    onChange={(e) => setSettings({...settings, model: e.target.value})} 
-                    placeholder={settings.provider === 'gemini' ? 'gemini-2.0-flash' : 'gpt-4o-mini'}
-                    className="w-full p-2 border border-slate-300 rounded text-sm"
-                  />
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Model</label>
+                  <select value={settings.model} onChange={(e) => setSettings({...settings, model: e.target.value})} className="w-full p-2 border border-slate-300 rounded text-sm">
+                    {currentProvider.models.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
                </div>
                <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tone</label><select value={settings.tone} onChange={(e) => setSettings({...settings, tone: e.target.value})} className="w-full p-2 border border-slate-300 rounded text-sm"><option>Corporate Professional</option><option>Executive Leadership</option><option>Startup / Agile</option><option>Creative</option><option>Academic</option></select></div>
                <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Strategy</label><select value={settings.strictness} onChange={(e) => setSettings({...settings, strictness: e.target.value})} className="w-full p-2 border border-slate-300 rounded text-sm"><option>Balanced</option><option>Aggressive</option><option>Conservative</option></select></div>
             </div>
             {!settings.apiKey && (
               <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
-                ⚠️ API key is required for AI features. Please enter your {settings.provider?.toUpperCase() || 'AI provider'} API key.
+                ⚠️ API key is required for AI features. Please enter your {currentProvider.name} API key.
               </div>
             )}
             <div className="mt-6 flex justify-end"><button onClick={onClose} className="bg-indigo-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-indigo-700">Save</button></div>
