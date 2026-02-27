@@ -142,32 +142,41 @@ async function handleFetchJob(data: any, provider?: string, apiKey?: string, mod
     // Try using z-ai's built-in web reader (no user API key needed)
     try {
       const zai = await getZAIClient();
+      console.log('ZAI client status:', zai ? 'initialized' : 'null');
+      
       if (zai) {
         // Try web reader first
         try {
+          console.log('Trying web_reader for URL:', url);
           const readerResult = await zai.functions.invoke("web_reader", { url });
+          console.log('web_reader result:', readerResult ? 'got content' : 'empty');
           if (readerResult && readerResult.content) {
             jobContent = readerResult.content;
           }
-        } catch (e) {
+        } catch (e: any) {
+          console.log('Web reader failed:', e.message);
           // Web reader failed, try web search
           try {
+            console.log('Trying web_search fallback');
             const searchResult = await zai.functions.invoke("web_search", {
               query: `job listing ${url}`,
               num: 5
             });
+            console.log('web_search result:', searchResult ? 'got results' : 'empty');
             if (searchResult && Array.isArray(searchResult) && searchResult.length > 0) {
               jobContent = searchResult.map((r: any) => 
                 `Title: ${r.name || 'N/A'}\nURL: ${r.url || 'N/A'}\nSnippet: ${r.snippet || 'N/A'}`
               ).join('\n\n');
             }
-          } catch (e2) {
-            console.log('Web search also failed:', e2);
+          } catch (e2: any) {
+            console.log('Web search also failed:', e2.message);
           }
         }
+      } else {
+        console.log('ZAI client not available - environment variables may not be set');
       }
-    } catch (e) {
-      console.log('Failed to fetch from web:', e);
+    } catch (e: any) {
+      console.log('Failed to initialize ZAI client:', e.message);
     }
     
     // If we got content, return it (no AI analysis needed)
@@ -202,13 +211,14 @@ async function handleFetchJob(data: any, provider?: string, apiKey?: string, mod
       });
     }
     
-    // No content fetched
+    // No content fetched - return helpful error message
     return NextResponse.json({ 
       success: false, 
-      error: 'Could not fetch job details from the URL. Please paste the job description manually.' 
+      error: 'Could not fetch job details. Please paste the job description manually, or configure an API key in Settings for enhanced URL fetching.' 
     }, { status: 400 });
     
   } catch (error: any) {
+    console.error('Job fetch error:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
