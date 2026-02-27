@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import ZAI from 'z-ai-web-dev-sdk';
 
-console.log('🔄 API route loaded - v8 (enhanced web fetching with debug logging)');
+console.log('🔄 API route loaded - v9 (improved URL fetching with direct HTTP support)');
 
 // Configuration from environment variables
 function getAIConfig() {
