@@ -91,6 +91,8 @@ export async function POST(request: NextRequest) {
     // If provider is specified with API key, use that provider
     if (provider && apiKey) {
       switch (provider) {
+        case 'zai':
+          return await handleZAI(action, data, apiKey, model);
         case 'gemini':
           return await handleGemini(action, data, apiKey, model);
         case 'deepseek':
@@ -214,6 +216,45 @@ async function handleLocalExtraction(data: any) {
     success: false, 
     error: 'PDF extraction is now handled client-side. Please use the file upload button in the browser.' 
   }, { status: 400 });
+}
+
+// Z.AI (chat.z.ai) handler using z-ai-web-dev-sdk
+async function handleZAI(action: string, data: any, apiKey: string, model?: string) {
+  try {
+    // Create ZAI client with user's API key
+    const zai = new ZAI({
+      baseUrl: 'https://api.z.ai/v1',
+      apiKey: apiKey
+    });
+    
+    // Build the prompt based on action
+    let prompt: string;
+    if (action === 'optimize-resume') {
+      prompt = buildOptimizePrompt(data);
+    } else if (action === 'extract-file' && data.base64 && data.mimeType) {
+      prompt = 'Extract ALL text from this document. Return ONLY the extracted text content, preserving structure and formatting.';
+    } else {
+      prompt = getPromptForAction(action, data);
+    }
+    
+    // Call the AI
+    const completion = await zai.chat.completions.create({
+      model: model || 'auto',
+      messages: [
+        { role: 'system', content: 'You are a helpful assistant specialized in resume optimization and career services.' },
+        { role: 'user', content: prompt }
+      ]
+    });
+    
+    const text = completion.choices?.[0]?.message?.content || '';
+    return processResponse(action, text, data);
+  } catch (error: any) {
+    console.error('Z.AI API Error:', error);
+    return NextResponse.json({ 
+      success: false, 
+      error: `Z.AI request failed: ${error.message}` 
+    }, { status: 500 });
+  }
 }
 
 // Default AI handler using z-ai-web-dev-sdk (no API key required)

@@ -357,6 +357,7 @@ const SettingsModal = ({ isOpen, onClose, settings, setSettings }) => {
    if (!isOpen) return null;
    
    const providers = [
+     { id: 'zai', name: 'Z.AI (chat.z.ai)', models: ['auto', 'gpt-4o', 'claude-3.5-sonnet', 'gemini-2.0-flash'], keyUrl: 'https://chat.z.ai' },
      { id: 'gemini', name: 'Google Gemini', models: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'], keyUrl: 'https://aistudio.google.com/apikey' },
      { id: 'openai', name: 'OpenAI', models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'], keyUrl: 'https://platform.openai.com/api-keys' },
      { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-chat', 'deepseek-coder'], keyUrl: 'https://platform.deepseek.com' },
