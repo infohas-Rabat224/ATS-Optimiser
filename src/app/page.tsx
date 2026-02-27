@@ -2,6 +2,12 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, RefreshCw, ChevronRight, BarChart2, Download, Copy, Briefcase, FileUp, FileDown, Loader2, Search, Mail, MessageSquare, Printer, Edit3, Save, Send, History, Settings, X, Trash2, Eye, EyeOff, Plane, ShieldCheck, Users, Layout, Activity, FileStack, Cloud, Check, Lock, Globe } from 'lucide-react';
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Configure PDF.js worker
+if (typeof window !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+}
 
 // --- BACKEND API HELPER ---
 const callBackendAI = async (action: string, data: any, provider?: string, apiKey?: string, model?: string) => {
@@ -229,24 +235,56 @@ const parseFile = async (file: File, settings: any): Promise<string> => {
       return result.value;
     } else { throw new Error("DOCX parser not loaded yet."); }
   } 
-  // PDF and Image files - use AI-independent backend extraction (NO API KEY REQUIRED)
-  else if (file.name.endsWith('.pdf') || file.type === 'application/pdf' || isImage) {
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    const response = await fetch('/api/resume/extract', {
-      method: 'POST',
-      body: formData
-    });
-    
-    const result = await response.json();
-    
-    if (!result.success) {
-      throw new Error(result.error || 'Failed to extract text from file');
+  // PDF files - use client-side PDF.js (AI-independent, NO API KEY REQUIRED)
+  else if (file.name.endsWith('.pdf') || file.type === 'application/pdf') {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+      const pdfDocument = await loadingTask.promise;
+      
+      let fullText = '';
+      const numPages = pdfDocument.numPages;
+      
+      for (let i = 1; i <= numPages; i++) {
+        const page = await pdfDocument.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          .map((item: any) => item.str)
+          .join(' ');
+        fullText += pageText + '\n';
+      }
+      
+      const trimmedText = fullText.trim();
+      if (!trimmedText || trimmedText.length < 50) {
+        throw new Error('PDF appears to be empty or is a scanned image. Please use a text-based PDF or configure an API key for image-based PDFs.');
+      }
+      
+      return trimmedText;
+    } catch (error: any) {
+      console.error('PDF parsing error:', error);
+      throw new Error(error.message || 'Failed to parse PDF. Please ensure it is a valid text-based PDF.');
+    }
+  }
+  // Image files - require AI-based extraction (API KEY REQUIRED)
+  else if (isImage) {
+    if (!settings?.apiKey) {
+      throw new Error("Image extraction requires an API key. Please configure your API key in Settings or convert the image to a text PDF.");
     }
     
-    return result.text;
-  } 
+    const base64Data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve((reader.result as string).split(',')[1]);
+      reader.onerror = reject;
+    });
+    
+    const data = await callBackendAI('extract-file', {
+      base64: base64Data,
+      mimeType: file.type
+    }, settings.provider, settings.apiKey, settings.model);
+    return data.text;
+  }
   // Plain text files
   else {
     return new Promise((resolve, reject) => {
