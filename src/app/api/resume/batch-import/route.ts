@@ -6,13 +6,6 @@ import {
   createBatch
 } from '@/lib/batch-processor';
 
-// Maximum file size for form data (50MB to handle multiple files)
-export const config = {
-  api: {
-    bodyParser: false
-  }
-};
-
 export async function POST(request: NextRequest) {
   try {
     // Get client IP for rate limiting
